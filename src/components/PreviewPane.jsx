@@ -34,6 +34,20 @@ function parseCsv(content) {
     .map((line) => line.split(","));
 }
 
+function splitMarkdownTableRow(line) {
+  return String(line ?? "")
+    .trim()
+    .replace(/^\|/, "")
+    .replace(/\|$/, "")
+    .split("|")
+    .map((cell) => cell.trim());
+}
+
+function isMarkdownTableSeparatorRow(line) {
+  const cells = splitMarkdownTableRow(line);
+  return cells.length > 1 && cells.every((cell) => /^:?-{3,}:?$/.test(cell));
+}
+
 function detectLanguage(fileName) {
   if (fileName.toLowerCase() === ".gitignore") {
     return "plaintext";
@@ -133,7 +147,8 @@ function parseMarkdownDocument(markdown) {
     inCodeBlock = false;
   }
 
-  for (const line of lines) {
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
     if (inCodeBlock) {
       if (/^```/.test(line)) {
         flushCodeBlock();
@@ -169,6 +184,38 @@ function parseMarkdownDocument(markdown) {
       };
       headings.push(heading);
       blocks.push(heading);
+      continue;
+    }
+
+    const nextLine = lines[index + 1] || "";
+    if (line.includes("|") && isMarkdownTableSeparatorRow(nextLine)) {
+      flushParagraph();
+      flushList();
+
+      const headers = splitMarkdownTableRow(line).map((cell) => renderMarkdownInline(cell));
+      const rows = [];
+      index += 1;
+
+      while (index + 1 < lines.length) {
+        const rowLine = lines[index + 1];
+        if (!rowLine.trim() || !rowLine.includes("|")) {
+          break;
+        }
+        if (isMarkdownTableSeparatorRow(rowLine)) {
+          break;
+        }
+
+        const rowCells = splitMarkdownTableRow(rowLine).map((cell) => renderMarkdownInline(cell));
+        const normalizedRow = headers.map((_, cellIndex) => rowCells[cellIndex] || "");
+        rows.push(normalizedRow);
+        index += 1;
+      }
+
+      blocks.push({
+        kind: "table",
+        headers,
+        rows
+      });
       continue;
     }
 
@@ -230,9 +277,66 @@ function saveRecentFiles(files) {
   }
 }
 
-export default function PreviewPane({ selectedFile, onSelectFile, onSaved, markdownHeadingColors }) {
+function getNormalizedEditValue(fileData) {
+  if (!fileData) {
+    return "";
+  }
+
+  if (fileData.type === "json") {
+    try {
+      return JSON.stringify(JSON.parse(fileData.content), null, 2);
+    } catch {
+      return fileData.content || "";
+    }
+  }
+
+  return fileData.content || "";
+}
+
+function createEmptyTabState(path, name) {
+  return {
+    path,
+    name,
+    fileData: null,
+    editValue: "",
+    baseEditValue: "",
+    mode: "preview",
+    previewFontScale: 1,
+    markdownSplitRatio: 0.52,
+    loading: false,
+    error: "",
+    pdfPages: [],
+    pdfDualPage: false,
+    currentPage: 1,
+    totalPages: 0,
+    imageSrc: "",
+    imageSize: null,
+    pdfViewport: { width: 0, height: 0 },
+    imageNavFiles: [],
+    collapsedMarkdownHeadings: [],
+    previewScrollTop: 0,
+    editorScrollTop: 0,
+    editorSelection: null
+  };
+}
+
+function Pane({
+  pane,
+  selectedFile,
+  onSelectFile,
+  onSaved,
+  markdownHeadingColors,
+  onUpdatePane,
+  onSplitRight,
+  onPaneFocus,
+  onMoveTabToPane
+}) {
+  const tabStateRef = useRef(new Map());
+  const previewScrollRef = useRef(null);
+  const editorAreaRef = useRef(null);
   const [fileData, setFileData] = useState(null);
   const [editValue, setEditValue] = useState("");
+  const [baseEditValue, setBaseEditValue] = useState("");
   const [mode, setMode] = useState("preview");
   const [previewFontScale, setPreviewFontScale] = useState(1);
   const [markdownSplitRatio, setMarkdownSplitRatio] = useState(0.52);
@@ -248,12 +352,22 @@ export default function PreviewPane({ selectedFile, onSelectFile, onSaved, markd
   const [pdfViewport, setPdfViewport] = useState({ width: 0, height: 0 });
   const [imageNavFiles, setImageNavFiles] = useState([]);
   const [collapsedMarkdownHeadings, setCollapsedMarkdownHeadings] = useState(() => new Set());
+  const [editorSelection, setEditorSelection] = useState(null);
   const previewShellRef = useRef(null);
   const pdfWrapRef = useRef(null);
   const pdfPageUrlsRef = useRef([]);
   const editorGutterRef = useRef(null);
   const markdownSplitRef = useRef(null);
   const markdownSplitDragRef = useRef({ dragging: false });
+  const tabDragRafRef = useRef(0);
+  const openTabs = pane?.tabs || [];
+  const activeTabPath = pane?.activeTabPath || "";
+  const activeTab = openTabs.find((tab) => tab.path === activeTabPath) || null;
+  const activeTabName = activeTab?.name || selectedFile?.name || "";
+  const [draggingTabPath, setDraggingTabPath] = useState("");
+  const [dragOverTabPath, setDragOverTabPath] = useState("");
+  const [dragPosition, setDragPosition] = useState("");
+  const [tabContextMenu, setTabContextMenu] = useState(null);
   const isMarkdown = Boolean(fileData && isMarkdownFileName(fileData.name));
   const markdownDocument = useMemo(
     () => (isMarkdown ? parseMarkdownDocument(editValue) : { blocks: [], headings: [] }),
@@ -269,6 +383,101 @@ export default function PreviewPane({ selectedFile, onSelectFile, onSaved, markd
     () => Array.from({ length: editorLineCount }, (_, index) => index + 1),
     [editorLineCount]
   );
+
+  function setOpenTabs(updater) {
+    if (!onUpdatePane) {
+      return;
+    }
+    onUpdatePane((currentPane) => ({
+      ...currentPane,
+      tabs: typeof updater === "function" ? updater(currentPane.tabs || []) : updater
+    }));
+  }
+
+  function setActiveTabPath(nextValue) {
+    if (!onUpdatePane) {
+      return;
+    }
+    onUpdatePane((currentPane) => ({
+      ...currentPane,
+      activeTabPath: typeof nextValue === "function" ? nextValue(currentPane.activeTabPath || "") : nextValue
+    }));
+  }
+
+  function syncActiveTabState(nextOverrides = {}) {
+    if (!activeTabPath) {
+      return;
+    }
+
+    const nextState = {
+      ...(tabStateRef.current.get(activeTabPath) || createEmptyTabState(activeTabPath, activeTabName)),
+      path: activeTabPath,
+      name: activeTabName,
+      fileData,
+      editValue,
+      baseEditValue,
+      mode,
+      previewFontScale,
+      markdownSplitRatio,
+      loading,
+      error,
+      pdfPages,
+      pdfDualPage,
+      currentPage,
+      totalPages,
+      imageSrc,
+      imageSize,
+      pdfViewport,
+      imageNavFiles,
+      collapsedMarkdownHeadings: Array.from(collapsedMarkdownHeadings),
+      previewScrollTop: previewScrollRef.current?.scrollTop || 0,
+      editorScrollTop: editorAreaRef.current?.scrollTop || 0,
+      editorSelection,
+      ...nextOverrides
+    };
+
+    tabStateRef.current.set(activeTabPath, nextState);
+    setOpenTabs((current) =>
+      current.map((tab) =>
+        tab.path === activeTabPath
+          ? {
+              ...tab,
+              name: activeTabName || tab.name,
+              isDirty: Boolean(nextState.fileData?.editable && nextState.editValue !== nextState.baseEditValue)
+            }
+          : tab
+      )
+    );
+  }
+
+  function restoreTabState(tabPath, nextName) {
+    const savedState = tabStateRef.current.get(tabPath);
+    const nextState = savedState || createEmptyTabState(tabPath, nextName);
+    tabStateRef.current.set(tabPath, {
+      ...nextState,
+      path: tabPath,
+      name: nextName || nextState.name || tabPath
+    });
+
+    setFileData(nextState.fileData || null);
+    setEditValue(nextState.editValue || "");
+    setBaseEditValue(nextState.baseEditValue || "");
+    setMode(nextState.mode || "preview");
+    setPreviewFontScale(Number(nextState.previewFontScale) || 1);
+    setMarkdownSplitRatio(Number(nextState.markdownSplitRatio) || 0.52);
+    setLoading(Boolean(nextState.loading));
+    setError(nextState.error || "");
+    setPdfPages(Array.isArray(nextState.pdfPages) ? nextState.pdfPages : []);
+    setPdfDualPage(Boolean(nextState.pdfDualPage));
+    setCurrentPage(Number(nextState.currentPage) || 1);
+    setTotalPages(Number(nextState.totalPages) || 0);
+    setImageSrc(nextState.imageSrc || "");
+    setImageSize(nextState.imageSize || null);
+    setPdfViewport(nextState.pdfViewport || { width: 0, height: 0 });
+    setImageNavFiles(Array.isArray(nextState.imageNavFiles) ? nextState.imageNavFiles : []);
+    setCollapsedMarkdownHeadings(new Set(nextState.collapsedMarkdownHeadings || []));
+    setEditorSelection(nextState.editorSelection || null);
+  }
 
   function handlePreviewWheel(event) {
     if (!event.ctrlKey && !event.metaKey) {
@@ -298,10 +507,222 @@ export default function PreviewPane({ selectedFile, onSelectFile, onSaved, markd
     };
   }, []);
 
+  useEffect(() => {
+    function handleTabShortcuts(event) {
+      const isModifier = event.metaKey || event.ctrlKey;
+      if (!isModifier) {
+        return;
+      }
+
+      if (event.key === "Tab") {
+        event.preventDefault();
+        switchTabByOffset(event.shiftKey ? -1 : 1);
+        return;
+      }
+
+      if (event.key.toLowerCase() === "w") {
+        event.preventDefault();
+        closeTab(activeTabPath);
+      }
+    }
+
+    window.addEventListener("keydown", handleTabShortcuts);
+    return () => window.removeEventListener("keydown", handleTabShortcuts);
+  }, [activeTabPath, openTabs]);
+
   function handleEditorScroll(event) {
     if (editorGutterRef.current) {
       editorGutterRef.current.scrollTop = event.currentTarget.scrollTop;
     }
+    syncActiveTabState({
+      editorScrollTop: event.currentTarget.scrollTop
+    });
+  }
+
+  function handlePreviewScroll(event) {
+    syncActiveTabState({
+      previewScrollTop: event.currentTarget.scrollTop
+    });
+  }
+
+  function handleEditorSelect(event) {
+    syncActiveTabState({
+      editorSelection: {
+        start: event.currentTarget.selectionStart,
+        end: event.currentTarget.selectionEnd
+      }
+    });
+  }
+
+  function openOrActivateTab(filePath, fileName) {
+    if (!filePath) {
+      return;
+    }
+
+    syncActiveTabState();
+    setOpenTabs((current) => {
+      if (current.some((tab) => tab.path === filePath)) {
+        return current;
+      }
+      return [...current, { path: filePath, name: fileName || filePath, isDirty: false }];
+    });
+    setActiveTabPath(filePath);
+  }
+
+  function switchTabByOffset(offset) {
+    if (openTabs.length === 0) {
+      return;
+    }
+
+    const currentIndex = Math.max(0, openTabs.findIndex((tab) => tab.path === activeTabPath));
+    const nextIndex = (currentIndex + offset + openTabs.length) % openTabs.length;
+    const nextTab = openTabs[nextIndex];
+    if (!nextTab) {
+      return;
+    }
+
+    syncActiveTabState();
+    setActiveTabPath(nextTab.path);
+  }
+
+  function closeTab(tabPath) {
+    if (!tabPath) {
+      return;
+    }
+
+    syncActiveTabState();
+    const index = openTabs.findIndex((tab) => tab.path === tabPath);
+    if (index === -1) {
+      return;
+    }
+
+    const nextTabs = openTabs.filter((tab) => tab.path !== tabPath);
+    if (tabStateRef.current.has(tabPath)) {
+      tabStateRef.current.delete(tabPath);
+    }
+
+    setOpenTabs(nextTabs);
+
+    if (activeTabPath !== tabPath) {
+      return;
+    }
+
+    const nextActive = nextTabs[index] || nextTabs[index - 1] || null;
+    if (nextActive) {
+      setActiveTabPath(nextActive.path);
+      const saved = tabStateRef.current.get(nextActive.path);
+      if (saved) {
+        restoreTabState(nextActive.path, nextActive.name);
+      }
+      return;
+    }
+
+    setActiveTabPath("");
+    unwatchFile();
+    setFileData(null);
+    setEditValue("");
+    setBaseEditValue("");
+    setMode("preview");
+    setLoading(false);
+    setError("");
+    setPdfPages([]);
+    setImageNavFiles([]);
+  }
+
+  function resetTabDragState() {
+    if (tabDragRafRef.current) {
+      cancelAnimationFrame(tabDragRafRef.current);
+      tabDragRafRef.current = 0;
+    }
+    setDraggingTabPath("");
+    setDragOverTabPath("");
+    setDragPosition("");
+  }
+
+  function reorderTabs(dragPath, targetPath, position) {
+    if (!dragPath || !targetPath || dragPath === targetPath) {
+      return;
+    }
+
+    setOpenTabs((current) => {
+      const fromIndex = current.findIndex((tab) => tab.path === dragPath);
+      const targetIndex = current.findIndex((tab) => tab.path === targetPath);
+      if (fromIndex === -1 || targetIndex === -1) {
+        return current;
+      }
+
+      const dragTab = current[fromIndex];
+      const remaining = current.filter((tab) => tab.path !== dragPath);
+      const remainingTargetIndex = remaining.findIndex((tab) => tab.path === targetPath);
+      if (remainingTargetIndex === -1) {
+        return current;
+      }
+
+      const insertIndex = position === "after" ? remainingTargetIndex + 1 : remainingTargetIndex;
+      const nextTabs = [...remaining];
+      nextTabs.splice(insertIndex, 0, dragTab);
+      if (nextTabs.length === current.length && nextTabs.every((tab, index) => tab.path === current[index].path)) {
+        return current;
+      }
+      return nextTabs;
+    });
+  }
+
+  function handleTabDragStart(tabPath, event) {
+    if (openTabs.length <= 1) {
+      return;
+    }
+
+    setDraggingTabPath(tabPath);
+    setDragOverTabPath("");
+    setDragPosition("");
+  }
+
+  function handleTabDragOver(tabPath, event) {
+    if (!draggingTabPath || draggingTabPath === tabPath) {
+      return;
+    }
+
+    event.preventDefault();
+
+    const rect = event.currentTarget.getBoundingClientRect();
+    const clientX = event.clientX;
+    const nextPosition = clientX < rect.left + rect.width / 2 ? "before" : "after";
+
+    if (tabDragRafRef.current) {
+      cancelAnimationFrame(tabDragRafRef.current);
+    }
+
+    tabDragRafRef.current = requestAnimationFrame(() => {
+      setDragOverTabPath((current) => (current === tabPath ? current : tabPath));
+      setDragPosition((current) => (current === nextPosition ? current : nextPosition));
+    });
+  }
+
+  function handleTabDrop(tabPath) {
+    if (!draggingTabPath || draggingTabPath === tabPath) {
+      resetTabDragState();
+      return;
+    }
+
+    reorderTabs(draggingTabPath, tabPath, dragPosition || "before");
+    resetTabDragState();
+  }
+
+  function handleTabDragEnd() {
+    resetTabDragState();
+  }
+
+  function handleTabContextMenu(tab, event) {
+    event.preventDefault();
+    event.stopPropagation();
+    onPaneFocus?.(pane.id);
+    setTabContextMenu({
+      x: event.clientX,
+      y: event.clientY,
+      tabPath: tab.path,
+      tabName: tab.name
+    });
   }
 
   function handleMarkdownSplitPointerDown(event) {
@@ -344,40 +765,98 @@ export default function PreviewPane({ selectedFile, onSelectFile, onSaved, markd
   }, []);
 
   useEffect(() => {
+    if (!selectedFile?.path) {
+      return;
+    }
+
+    setOpenTabs((current) => {
+      if (current.some((tab) => tab.path === selectedFile.path)) {
+        return current;
+      }
+      return [...current, { path: selectedFile.path, name: selectedFile.name, isDirty: false }];
+    });
+    setActiveTabPath(selectedFile.path);
+  }, [selectedFile]);
+
+  useEffect(() => {
     let cancelled = false;
 
-    if (!selectedFile?.path) {
+    if (!activeTabPath) {
       unwatchFile();
       setFileData(null);
       setEditValue("");
+      setBaseEditValue("");
       setError("");
       setImageSrc("");
       setCurrentPage(1);
       setTotalPages(0);
       setCollapsedMarkdownHeadings(new Set());
-      return;
+      setPdfPages([]);
+      setImageNavFiles([]);
+      return () => {
+        cancelled = true;
+      };
     }
+
+    const savedState = tabStateRef.current.get(activeTabPath);
+    if (savedState) {
+      restoreTabState(activeTabPath, savedState.name || activeTab?.name || selectedFile?.name || activeTabPath);
+    }
+
+    const hasCachedFile = Boolean(savedState?.fileData?.path === activeTabPath);
+    if (hasCachedFile) {
+      watchFile(activeTabPath).catch(() => {});
+      return () => {
+        cancelled = true;
+        unwatchFile();
+      };
+    }
+
+    setFileData(null);
+    setEditValue("");
+    setBaseEditValue("");
+    setMode("preview");
+    setError("");
+    setImageSrc("");
+    setImageSize(null);
+    setPdfPages([]);
+    setPdfDualPage(false);
+    setCurrentPage(1);
+    setTotalPages(0);
+    setImageNavFiles([]);
+    setCollapsedMarkdownHeadings(new Set());
 
     async function load() {
       try {
-        await watchFile(selectedFile.path);
+        await watchFile(activeTabPath);
         setLoading(true);
         setError("");
         setPdfPages([]);
         setCurrentPage(1);
         setTotalPages(0);
-        const next = await readFile(selectedFile.path);
+        const next = await readFile(activeTabPath);
         if (cancelled) {
           return;
         }
         setFileData(next);
-        try {
-          setEditValue(next.type === "json" ? JSON.stringify(JSON.parse(next.content), null, 2) : next.content || "");
-        } catch {
-          setEditValue(next.content || "");
-        }
+        const nextEditValue = getNormalizedEditValue(next);
+        setEditValue(nextEditValue);
+        setBaseEditValue(nextEditValue);
         setMode("preview");
         setCollapsedMarkdownHeadings(new Set());
+        setImageNavFiles([]);
+        syncActiveTabState({
+          fileData: next,
+          editValue: nextEditValue,
+          baseEditValue: nextEditValue,
+          loading: false,
+          error: "",
+          pdfPages: [],
+          currentPage: 1,
+          totalPages: 0,
+          collapsedMarkdownHeadings: [],
+          imageNavFiles: []
+        });
       } catch (loadError) {
         if (cancelled) {
           return;
@@ -392,6 +871,13 @@ export default function PreviewPane({ selectedFile, onSelectFile, onSaved, markd
         setFileData(null);
         setImageSrc("");
         setCollapsedMarkdownHeadings(new Set());
+        syncActiveTabState({
+          fileData: null,
+          editValue: "",
+          baseEditValue: "",
+          loading: false,
+          error: loadError?.message || ""
+        });
       } finally {
         setLoading(false);
       }
@@ -402,7 +888,7 @@ export default function PreviewPane({ selectedFile, onSelectFile, onSaved, markd
       cancelled = true;
       unwatchFile();
     };
-  }, [selectedFile]);
+  }, [activeTabPath]);
 
   useEffect(() => {
     if (!fileData) {
@@ -592,39 +1078,47 @@ export default function PreviewPane({ selectedFile, onSelectFile, onSaved, markd
   }, [fileData, pdfDualPage, totalPages]);
 
   useEffect(() => {
-    if (!selectedFile?.path) {
+    if (!activeTabPath || !fileData?.path) {
       return;
     }
 
     const nextRecentFiles = [
-      selectedFile,
-      ...recentFiles.filter((item) => item.path !== selectedFile.path)
+      { path: fileData.path, name: fileData.name },
+      ...recentFiles.filter((item) => item.path !== fileData.path)
     ].slice(0, MAX_RECENT_FILES);
 
     setRecentFiles(nextRecentFiles);
     saveRecentFiles(nextRecentFiles);
-  }, [selectedFile]);
+  }, [activeTabPath, fileData]);
 
   useEffect(() => {
     let unsubscribe;
 
     async function init() {
       unsubscribe = onFileChanged(async (filePath) => {
-        if (filePath !== selectedFile?.path) {
+        if (filePath !== activeTabPath) {
           return;
         }
         try {
           const next = await readFile(filePath);
+          const nextEditValue = getNormalizedEditValue(next);
           setFileData(next);
-          try {
-            setEditValue(next.type === "json" ? JSON.stringify(JSON.parse(next.content), null, 2) : next.content || "");
-          } catch {
-            setEditValue(next.content || "");
-          }
+          setEditValue(nextEditValue);
+          setBaseEditValue(nextEditValue);
           setError("");
+          syncActiveTabState({
+            fileData: next,
+            editValue: nextEditValue,
+            baseEditValue: nextEditValue,
+            error: ""
+          });
         } catch (loadError) {
           setError(loadError.message);
           setFileData(null);
+          syncActiveTabState({
+            fileData: null,
+            error: loadError.message
+          });
         }
       });
     }
@@ -636,7 +1130,7 @@ export default function PreviewPane({ selectedFile, onSelectFile, onSaved, markd
         unsubscribe();
       }
     };
-  }, [selectedFile]);
+  }, [activeTabPath]);
 
   useEffect(() => {
     if (!fileData) {
@@ -664,19 +1158,20 @@ export default function PreviewPane({ selectedFile, onSelectFile, onSaved, markd
     let cancelled = false;
 
     async function loadImageNavFiles() {
-      if (fileData?.type !== "image" || !selectedFile?.directoryPath) {
+      if (fileData?.type !== "image" || !activeTabPath) {
         setImageNavFiles([]);
         return;
       }
 
       try {
-        const entries = await listDirectory(selectedFile.directoryPath);
+        const directoryPath = activeTabPath.split("/").slice(0, -1).join("/") || "/";
+        const entries = await listDirectory(directoryPath);
         const nextFiles = entries
           .filter((entry) => entry.type === "file" && isImageFileName(entry.name))
           .map((entry) => ({
             path: entry.path,
             name: entry.name,
-            directoryPath: selectedFile.directoryPath
+            directoryPath
           }));
 
         if (!cancelled) {
@@ -694,7 +1189,64 @@ export default function PreviewPane({ selectedFile, onSelectFile, onSaved, markd
     return () => {
       cancelled = true;
     };
-  }, [fileData, selectedFile]);
+  }, [activeTabPath, fileData]);
+
+  useEffect(() => {
+    if (!activeTabPath) {
+      return;
+    }
+
+    syncActiveTabState();
+  }, [
+    activeTabPath,
+    fileData,
+    editValue,
+    baseEditValue,
+    mode,
+    previewFontScale,
+    markdownSplitRatio,
+    loading,
+    error,
+    pdfPages,
+    pdfDualPage,
+    currentPage,
+    totalPages,
+    imageSrc,
+    imageSize,
+    pdfViewport,
+    imageNavFiles,
+    collapsedMarkdownHeadings,
+    editorSelection
+  ]);
+
+  useEffect(() => {
+    if (!activeTabPath) {
+      return;
+    }
+
+    const savedState = tabStateRef.current.get(activeTabPath);
+    if (!savedState) {
+      return;
+    }
+
+    const scrollTop = mode === "edit" ? savedState.editorScrollTop : savedState.previewScrollTop;
+    const target = mode === "edit" ? editorAreaRef.current : previewScrollRef.current;
+    if (!target) {
+      return;
+    }
+
+    requestAnimationFrame(() => {
+      target.scrollTop = Number(scrollTop) || 0;
+      if (mode === "edit" && editorAreaRef.current && savedState.editorSelection) {
+        const { start, end } = savedState.editorSelection;
+        try {
+          editorAreaRef.current.setSelectionRange(start ?? 0, end ?? 0);
+        } catch {
+          return;
+        }
+      }
+    });
+  }, [activeTabPath, mode, fileData]);
 
   const renderedHtml = useMemo(() => {
     if (!fileData || isMarkdown) {
@@ -718,7 +1270,7 @@ export default function PreviewPane({ selectedFile, onSelectFile, onSaved, markd
     return hljs.highlight(editValue, { language: lang, ignoreIllegals: true }).value;
   }, [editValue, fileData, isMarkdown]);
 
-  if (!selectedFile) {
+  if (!openTabs.length || !activeTabPath) {
     return (
       <div className="preview-shell">
         <div className="panel-empty">Select a file from the tree.</div>
@@ -726,30 +1278,22 @@ export default function PreviewPane({ selectedFile, onSelectFile, onSaved, markd
     );
   }
 
-  if (loading) {
-    return <div className="panel-empty">Loading preview...</div>;
-  }
-
-  if (error) {
-    return <div className="panel-empty">{error}</div>;
-  }
-
-  if (!fileData) {
-    return <div className="panel-empty">No preview available.</div>;
-  }
-
-  const isPdf = fileData.type === "pdf";
-  const isImage = fileData.type === "image";
-  const isCsv = fileData.type === "csv";
-  const canEdit = fileData.editable;
-  const csvRows = isCsv ? parseCsv(fileData.content) : [];
-  const imageNavIndex = isImage ? imageNavFiles.findIndex((item) => item.path === selectedFile.path) : -1;
+  const isPdf = Boolean(fileData && fileData.type === "pdf");
+  const isImage = Boolean(fileData && fileData.type === "image");
+  const isCsv = Boolean(fileData && fileData.type === "csv");
+  const canEdit = Boolean(fileData && fileData.editable);
+  const showTextControls = Boolean(canEdit && !isPdf && !isImage && !isCsv);
+  const csvRows = isCsv && fileData ? parseCsv(fileData.content) : [];
+  const imageNavIndex = isImage ? imageNavFiles.findIndex((item) => item.path === activeTabPath) : -1;
   const canNavigateImages = isImage && imageNavIndex >= 0 && imageNavFiles.length > 1;
   const resolvedImageSize =
     isImage && fileData.sourceWidth && fileData.sourceHeight
       ? { width: fileData.sourceWidth, height: fileData.sourceHeight }
       : imageSize;
-  const fileTitle = isImage && resolvedImageSize ? `${fileData.name} (${resolvedImageSize.width}x${resolvedImageSize.height})` : fileData.name;
+  const fileTitle =
+    fileData && isImage && resolvedImageSize
+      ? `${fileData.name} (${resolvedImageSize.width}x${resolvedImageSize.height})`
+      : fileData?.name || activeTabName;
 
   function toggleMarkdownHeading(headingId) {
     setCollapsedMarkdownHeadings((current) => {
@@ -834,6 +1378,32 @@ export default function PreviewPane({ selectedFile, onSelectFile, onSaved, markd
             />
           </pre>
         );
+        continue;
+      }
+
+      if (block.kind === "table") {
+        rendered.push(
+          <div key={`table-${rendered.length}`} className="markdown-table-wrap">
+            <table className="markdown-table">
+              <thead>
+                <tr>
+                  {block.headers.map((header, index) => (
+                    <th key={index} dangerouslySetInnerHTML={{ __html: header }} />
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {block.rows.map((row, rowIndex) => (
+                  <tr key={rowIndex}>
+                    {row.map((cell, cellIndex) => (
+                      <td key={cellIndex} dangerouslySetInnerHTML={{ __html: cell }} />
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        );
       }
     }
 
@@ -843,6 +1413,7 @@ export default function PreviewPane({ selectedFile, onSelectFile, onSaved, markd
   return (
     <div
       ref={previewShellRef}
+      id="pane-refactor-before-split"
       className="preview-shell"
       style={{
         "--preview-font-scale": previewFontScale,
@@ -854,23 +1425,102 @@ export default function PreviewPane({ selectedFile, onSelectFile, onSaved, markd
         "--markdown-heading-color-6": markdownHeadingColors?.[5] || "#9dd6c4"
       }}
     >
+      <div className="preview-tabs" role="tablist" aria-label="Opened files">
+        {openTabs.map((tab) => {
+          const isActive = tab.path === activeTabPath;
+          const isDragging = draggingTabPath === tab.path;
+          const isDropTarget = dragOverTabPath === tab.path && draggingTabPath && draggingTabPath !== tab.path;
+          return (
+            <button
+              key={tab.path}
+              type="button"
+              role="tab"
+              aria-selected={isActive}
+              draggable={openTabs.length > 1}
+              className={`preview-tab${isActive ? " active" : ""}${isDragging ? " dragging" : ""}${isDropTarget ? ` drop-${dragPosition}` : ""}`}
+              onClick={() => setActiveTabPath(tab.path)}
+              onDragStart={(event) => handleTabDragStart(tab.path, event)}
+              onDragOver={(event) => handleTabDragOver(tab.path, event)}
+              onDrop={(event) => {
+                event.preventDefault();
+                handleTabDrop(tab.path);
+              }}
+              onDragEnd={handleTabDragEnd}
+              onContextMenu={(event) => handleTabContextMenu(tab, event)}
+              onAuxClick={(event) => {
+                if (event.button === 1) {
+                  event.preventDefault();
+                  closeTab(tab.path);
+                }
+              }}
+              onDoubleClick={() => {
+                // Pinning is reserved for a later step.
+              }}
+            >
+              <span className="preview-tab-name">{tab.name}</span>
+              {tab.isDirty ? <span className="preview-tab-dirty" aria-hidden="true">●</span> : null}
+              <span
+                className="preview-tab-close"
+                role="button"
+                tabIndex={-1}
+                aria-label={`Close ${tab.name}`}
+                onClick={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  closeTab(tab.path);
+                }}
+                onMouseDown={(event) => event.stopPropagation()}
+              >
+                ×
+              </span>
+            </button>
+          );
+        })}
+      </div>
+      {tabContextMenu ? (
+        <div
+          className="preview-tab-menu"
+          style={{ left: `${tabContextMenu.x}px`, top: `${tabContextMenu.y}px` }}
+          onClick={(event) => event.stopPropagation()}
+        >
+          <button
+            type="button"
+            className="preview-tab-menu-item"
+            onClick={() => {
+              onSplitRight?.(pane.id, tabContextMenu.tabPath);
+              setTabContextMenu(null);
+            }}
+          >
+            Split Right
+          </button>
+          <button type="button" className="preview-tab-menu-item" onClick={() => setTabContextMenu(null)}>
+            Close
+          </button>
+        </div>
+      ) : null}
       <div className="preview-toolbar">
         <div className="preview-toolbar-main">
           <div className="preview-toolbar-row">
-            <strong className="preview-file-name">{fileTitle}</strong>
             <div className="preview-actions">
-              {canEdit ? (
+              {showTextControls ? (
                 <>
-                  <button className={mode === "preview" ? "active" : ""} onClick={() => setMode("preview")}>
-                    Preview
-                  </button>
-                  <button className={mode === "edit" ? "active" : ""} onClick={() => setMode("edit")}>
-                    Edit
+                  <button
+                    type="button"
+                    className={`preview-mode-button${mode === "preview" ? " active" : ""}`}
+                    onClick={() => setMode((current) => (current === "preview" ? "edit" : "preview"))}
+                  >
+                    {mode === "preview" ? "Edit" : "Preview"}
                   </button>
                   <button
+                    type="button"
                     className="save-button"
                     onClick={async () => {
                       await saveFile(fileData.path, editValue);
+                      setBaseEditValue(editValue);
+                      syncActiveTabState({
+                        baseEditValue: editValue,
+                        isDirty: false
+                      });
                       onSaved();
                     }}
                   >
@@ -936,124 +1586,321 @@ export default function PreviewPane({ selectedFile, onSelectFile, onSaved, markd
           </div>
         </div>
       </div>
-
-      {isPdf ? (
-        <div ref={pdfWrapRef} className="pdf-preview-wrap">
-          <div className={`pdf-pages ${pdfDualPage ? "dual" : "single"}`}>
-            {pdfPages.map((page) => (
-              <img
-                key={page.pageNumber}
-                className="pdf-page-image"
-                alt={`${fileData.name} page ${page.pageNumber}`}
-                src={page.src}
-              />
-            ))}
-          </div>
-        </div>
-      ) : null}
-
-      {isImage ? (
-        <div className="image-preview-wrap">
-          <img
-            className="image-preview"
-            alt={fileTitle}
-            src={imageSrc}
-            onLoad={(event) => {
-              if (fileData.sourceWidth && fileData.sourceHeight) {
-                return;
-              }
-              const target = event.currentTarget;
-              setImageSize({
-                width: target.naturalWidth,
-                height: target.naturalHeight
-              });
-            }}
-          />
-        </div>
-      ) : null}
-
-      {isCsv ? (
-        <div className="table-wrap">
-          <table className="csv-table">
-            <tbody>
-              {csvRows.map((row, rowIndex) => (
-                <tr key={`${rowIndex}-${row.join("-")}`}>
-                  {row.map((cell, cellIndex) => (
-                    <td key={`${rowIndex}-${cellIndex}`}>{cell}</td>
-                  ))}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      ) : null}
-
-      {!isPdf && !isImage && !isCsv && mode === "preview" ? (
-        isMarkdown ? (
-          <div className="code-preview markdown-preview">{renderMarkdownBlocks()}</div>
-        ) : (
-          <pre className="code-preview">
-            <code dangerouslySetInnerHTML={{ __html: renderedHtml }} />
-          </pre>
-        )
-      ) : null}
-
-      {!isPdf && !isImage && !isCsv && mode === "edit" ? (
-        isMarkdown ? (
-          <div
-            ref={markdownSplitRef}
-            className="markdown-edit-split"
-            style={{
-              gridTemplateColumns: `${Math.round(markdownSplitRatio * 1000) / 10}% 4px minmax(0, 1fr)`
-            }}
-          >
-            <div className="markdown-edit-split-pane markdown-edit-split-pane-editor">
-              <div className="editor-shell">
-                <div className="editor-line-numbers" ref={editorGutterRef} aria-hidden="true">
-                  {editorLineNumbers.map((lineNumber) => (
-                    <div key={lineNumber} className="editor-line-number">
-                      {lineNumber}
-                    </div>
-                  ))}
-                </div>
-                <textarea
-                  className="editor-area"
-                  value={editValue}
-                  onChange={(event) => setEditValue(event.target.value)}
-                  onScroll={handleEditorScroll}
-                  spellCheck={false}
-                />
+      {loading ? (
+        <div className="panel-empty">Loading preview...</div>
+      ) : error ? (
+        <div className="panel-empty">{error}</div>
+      ) : !fileData ? (
+        <div className="panel-empty">No preview available.</div>
+      ) : (
+        <>
+          {isPdf ? (
+            <div
+              ref={(node) => {
+                pdfWrapRef.current = node;
+                previewScrollRef.current = node;
+              }}
+              className="pdf-preview-wrap"
+              onScroll={handlePreviewScroll}
+            >
+              <div className={`pdf-pages ${pdfDualPage ? "dual" : "single"}`}>
+                {pdfPages.map((page) => (
+                  <img
+                    key={page.pageNumber}
+                    className="pdf-page-image"
+                    alt={`${fileData.name} page ${page.pageNumber}`}
+                    src={page.src}
+                  />
+                ))}
               </div>
             </div>
-            <button
-              type="button"
-              className="markdown-edit-split-divider"
-              aria-label="Resize markdown editor preview split"
-              onPointerDown={handleMarkdownSplitPointerDown}
-            />
-            <div className="markdown-edit-split-pane markdown-edit-split-pane-preview">
-              <div className="code-preview markdown-preview">{renderMarkdownBlocks()}</div>
+          ) : null}
+
+          {isImage ? (
+            <div className="image-preview-wrap" ref={previewScrollRef} onScroll={handlePreviewScroll}>
+              <img
+                className="image-preview"
+                alt={fileTitle}
+                src={imageSrc}
+                onLoad={(event) => {
+                  if (fileData.sourceWidth && fileData.sourceHeight) {
+                    return;
+                  }
+                  const target = event.currentTarget;
+                  setImageSize({
+                    width: target.naturalWidth,
+                    height: target.naturalHeight
+                  });
+                }}
+              />
             </div>
-          </div>
-        ) : (
-          <div className="editor-shell">
-            <div className="editor-line-numbers" ref={editorGutterRef} aria-hidden="true">
-              {editorLineNumbers.map((lineNumber) => (
-                <div key={lineNumber} className="editor-line-number">
-                  {lineNumber}
-                </div>
-              ))}
+          ) : null}
+
+          {isCsv ? (
+            <div className="table-wrap" ref={previewScrollRef} onScroll={handlePreviewScroll}>
+              <table className="csv-table">
+                <tbody>
+                  {csvRows.map((row, rowIndex) => (
+                    <tr key={`${rowIndex}-${row.join("-")}`}>
+                      {row.map((cell, cellIndex) => (
+                        <td key={`${rowIndex}-${cellIndex}`}>{cell}</td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
-            <textarea
-              className="editor-area"
-              value={editValue}
-              onChange={(event) => setEditValue(event.target.value)}
-              onScroll={handleEditorScroll}
-              spellCheck={false}
-            />
-          </div>
-        )
-      ) : null}
+          ) : null}
+
+          {!isPdf && !isImage && !isCsv ? (
+            <div className="preview-text-stage">
+              {mode === "preview" ? (
+                isMarkdown ? (
+                  <div
+                    className="code-preview markdown-preview"
+                    ref={previewScrollRef}
+                    onScroll={handlePreviewScroll}
+                  >
+                    {renderMarkdownBlocks()}
+                  </div>
+                ) : (
+                  <pre className="code-preview" ref={previewScrollRef} onScroll={handlePreviewScroll}>
+                    <code dangerouslySetInnerHTML={{ __html: renderedHtml }} />
+                  </pre>
+                )
+              ) : null}
+
+              {mode === "edit" ? (
+                isMarkdown ? (
+                  <div
+                    ref={markdownSplitRef}
+                    className="markdown-edit-split"
+                    style={{
+                      gridTemplateColumns: `${Math.round(markdownSplitRatio * 1000) / 10}% 4px minmax(0, 1fr)`
+                    }}
+                  >
+                    <div className="markdown-edit-split-pane markdown-edit-split-pane-editor">
+                      <div className="editor-shell">
+                        <div className="editor-line-numbers" ref={editorGutterRef} aria-hidden="true">
+                          {editorLineNumbers.map((lineNumber) => (
+                            <div key={lineNumber} className="editor-line-number">
+                              {lineNumber}
+                            </div>
+                          ))}
+                        </div>
+                        <textarea
+                          ref={editorAreaRef}
+                          className="editor-area"
+                          value={editValue}
+                          onChange={(event) => {
+                            setEditValue(event.target.value);
+                            syncActiveTabState({
+                              editValue: event.target.value,
+                              isDirty: event.target.value !== baseEditValue
+                            });
+                          }}
+                          onScroll={handleEditorScroll}
+                          onSelect={handleEditorSelect}
+                          spellCheck={false}
+                        />
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      className="markdown-edit-split-divider"
+                      aria-label="Resize markdown editor preview split"
+                      onPointerDown={handleMarkdownSplitPointerDown}
+                    />
+                    <div className="markdown-edit-split-pane markdown-edit-split-pane-preview">
+                      <div
+                        className="code-preview markdown-preview"
+                        ref={previewScrollRef}
+                        onScroll={handlePreviewScroll}
+                      >
+                        {renderMarkdownBlocks()}
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="editor-shell">
+                    <div className="editor-line-numbers" ref={editorGutterRef} aria-hidden="true">
+                      {editorLineNumbers.map((lineNumber) => (
+                        <div key={lineNumber} className="editor-line-number">
+                          {lineNumber}
+                        </div>
+                      ))}
+                    </div>
+                    <textarea
+                      ref={editorAreaRef}
+                      className="editor-area"
+                      value={editValue}
+                      onChange={(event) => {
+                        setEditValue(event.target.value);
+                        syncActiveTabState({
+                          editValue: event.target.value,
+                          isDirty: event.target.value !== baseEditValue
+                        });
+                      }}
+                      onScroll={handleEditorScroll}
+                      onSelect={handleEditorSelect}
+                      spellCheck={false}
+                    />
+                  </div>
+                )
+              ) : null}
+            </div>
+          ) : null}
+        </>
+      )}
+    </div>
+  );
+}
+
+export default function PaneContainer({ selectedFile, onSelectFile, onSaved, markdownHeadingColors }) {
+  const [panes, setPanes] = useState(() => [{ id: "pane-1", tabs: [], activeTabPath: "" }]);
+  const [activePaneId, setActivePaneId] = useState("pane-1");
+  const paneIdRef = useRef(2);
+
+  function updatePane(paneId, updater) {
+    setPanes((current) =>
+      current.map((pane) => {
+        if (pane.id !== paneId) {
+          return pane;
+        }
+        return typeof updater === "function" ? updater(pane) : updater;
+      })
+    );
+  }
+
+  function activatePane(paneId) {
+    setActivePaneId(paneId);
+  }
+
+  function splitPane(paneId, direction = "right", tabPath = "") {
+    setPanes((current) => {
+      if (current.length >= 2) {
+        return current;
+      }
+
+      const sourcePane = current.find((pane) => pane.id === paneId);
+      if (!sourcePane) {
+        return current;
+      }
+
+      const sourceTabPath = tabPath || sourcePane.activeTabPath || sourcePane.tabs[0]?.path || "";
+      if (!sourceTabPath) {
+        return current;
+      }
+
+      const sourceTab = sourcePane.tabs.find((tab) => tab.path === sourceTabPath);
+      const targetPaneId = `pane-${paneIdRef.current++}`;
+      const nextPane = {
+        id: targetPaneId,
+        tabs: sourceTab ? [{ ...sourceTab }] : [],
+        activeTabPath: sourceTabPath
+      };
+
+      const nextSourcePane = {
+        ...sourcePane,
+        tabs: sourcePane.tabs.filter((tab) => tab.path !== sourceTabPath),
+        activeTabPath:
+          sourcePane.activeTabPath === sourceTabPath
+            ? sourcePane.tabs.find((tab) => tab.path !== sourceTabPath)?.path || ""
+            : sourcePane.activeTabPath
+      };
+
+      setActivePaneId(targetPaneId);
+      return direction === "right" ? [nextSourcePane, nextPane] : [nextSourcePane, nextPane];
+    });
+  }
+
+  function moveTabToPane(tabPath, sourcePaneId, targetPaneId) {
+    if (!tabPath || sourcePaneId === targetPaneId) {
+      return;
+    }
+
+    setPanes((current) => {
+      const sourcePane = current.find((pane) => pane.id === sourcePaneId);
+      const targetPane = current.find((pane) => pane.id === targetPaneId);
+      if (!sourcePane || !targetPane) {
+        return current;
+      }
+
+      const sourceTab = sourcePane.tabs.find((tab) => tab.path === tabPath);
+      if (!sourceTab) {
+        return current;
+      }
+
+      const nextSourceTabs = sourcePane.tabs.filter((tab) => tab.path !== tabPath);
+      const nextTargetTabs = targetPane.tabs.some((tab) => tab.path === tabPath)
+        ? targetPane.tabs
+        : [...targetPane.tabs, { ...sourceTab }];
+
+      return current.map((pane) => {
+        if (pane.id === sourcePaneId) {
+          return {
+            ...pane,
+            tabs: nextSourceTabs,
+            activeTabPath:
+              pane.activeTabPath === tabPath ? nextSourceTabs[0]?.path || "" : pane.activeTabPath
+          };
+        }
+        if (pane.id === targetPaneId) {
+          return {
+            ...pane,
+            tabs: nextTargetTabs,
+            activeTabPath: tabPath
+          };
+        }
+        return pane;
+      });
+    });
+    setActivePaneId(targetPaneId);
+  }
+
+  function updatePaneFromPaneComponent(paneId, updater) {
+    updatePane(paneId, typeof updater === "function" ? updater : () => updater);
+  }
+
+  useEffect(() => {
+    if (!selectedFile?.path) {
+      return;
+    }
+
+    const activePane = panes.find((pane) => pane.id === activePaneId) || panes[0];
+    if (!activePane) {
+      return;
+    }
+
+    updatePane(activePane.id, (pane) => ({
+      ...pane,
+      tabs: pane.tabs.some((tab) => tab.path === selectedFile.path)
+        ? pane.tabs
+        : [...pane.tabs, { path: selectedFile.path, name: selectedFile.name, isDirty: false }],
+      activeTabPath: selectedFile.path
+    }));
+  }, [selectedFile]);
+
+  function handlePaneUpdate(paneId, updater) {
+    updatePane(paneId, updater);
+  }
+
+  return (
+    <div className="pane-container">
+      {panes.map((pane) => (
+        <Pane
+          key={pane.id}
+          pane={pane}
+          selectedFile={pane.id === activePaneId ? selectedFile : null}
+          onSelectFile={onSelectFile}
+          onSaved={onSaved}
+          markdownHeadingColors={markdownHeadingColors}
+          onUpdatePane={(updater) => handlePaneUpdate(pane.id, updater)}
+          onSplitRight={(paneId, tabPath) => splitPane(paneId, "right", tabPath)}
+          onPaneFocus={() => setActivePaneId(pane.id)}
+          onMoveTabToPane={(tabPath, targetPaneId) => moveTabToPane(tabPath, pane.id, targetPaneId)}
+        />
+      ))}
     </div>
   );
 }

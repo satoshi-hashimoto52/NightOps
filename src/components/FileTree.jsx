@@ -477,6 +477,7 @@ export default function FileTree({ rootPath, onSelectFile, selectedFilePath, rel
     if (!targetNode || targetNode.type !== "file") {
       return;
     }
+    void bringWindowToFront();
     setActivePath(targetNode.path);
     onSelectFile(getSelectionPayload(targetNode.path));
   }
@@ -868,6 +869,7 @@ export default function FileTree({ rootPath, onSelectFile, selectedFilePath, rel
 
   async function handleRename(node) {
     closeContextMenu();
+    await bringWindowToFront();
     setRenameDialog({
       node,
       value: node.name

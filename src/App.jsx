@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import TopBar from "./components/TopBar";
 import FileTree from "./components/FileTree";
-import PreviewPane from "./components/PreviewPane";
+import PaneContainer from "./components/PreviewPane";
 import LaunchPanel from "./components/LaunchPanel";
 import SettingsPanel from "./components/SettingsPanel";
 import { extractPathsFromEvent, handleDragOver as handleExternalDragOver } from "./utils/drop";
@@ -596,7 +596,7 @@ export default function App() {
         ) : null}
         <main className="right-panel">
           <div className="panel-title">Preview / Editor</div>
-          <PreviewPane
+          <PaneContainer
             selectedFile={selectedFile}
             onSelectFile={setSelectedFile}
             onSaved={() => setNotice("Saved")}

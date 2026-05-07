@@ -944,6 +944,166 @@ textarea {
   --preview-font-scale: 1;
 }
 
+.pane-container {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: row;
+  gap: 8px;
+}
+
+.pane-container > .preview-shell {
+  min-width: 0;
+}
+
+.preview-tabs {
+  display: flex;
+  align-items: stretch;
+  gap: 4px;
+  overflow: auto hidden;
+  padding-bottom: 2px;
+  scrollbar-width: thin;
+}
+
+.preview-tabs::-webkit-scrollbar {
+  height: 8px;
+}
+
+.preview-tabs::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.14);
+  border-radius: 999px;
+}
+
+.preview-tab {
+  position: relative;
+  min-width: 120px;
+  max-width: 220px;
+  flex: 0 1 180px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid transparent;
+  border-bottom-color: rgba(255, 255, 255, 0.08);
+  border-radius: 8px 8px 0 0;
+  background: rgba(24, 28, 35, 0.48);
+  color: var(--text-sub);
+  padding: 7px 10px 6px;
+  font-size: 11px;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: grab;
+  transition:
+    background 0.15s ease,
+    color 0.15s ease,
+    border-color 0.15s ease,
+    transform 0.15s ease;
+}
+
+.preview-tab:active {
+  cursor: grabbing;
+}
+
+.preview-tab:hover {
+  background: rgba(30, 35, 43, 0.8);
+  color: var(--text-main);
+}
+
+.preview-tab.active {
+  color: var(--text-main);
+  background: rgba(28, 33, 43, 0.94);
+  border-color: rgba(52, 58, 66, 0.9);
+  border-bottom-color: rgba(28, 33, 43, 0.94);
+  transform: translateY(1px);
+}
+
+.preview-tab.dragging {
+  opacity: 0.6;
+}
+
+.preview-tab.drop-before::before,
+.preview-tab.drop-after::after {
+  content: "";
+  position: absolute;
+  top: 4px;
+  bottom: 4px;
+  width: 2px;
+  background: var(--accent-yellow);
+  border-radius: 999px;
+  pointer-events: none;
+}
+
+.preview-tab.drop-before::before {
+  left: -2px;
+}
+
+.preview-tab.drop-after::after {
+  right: -2px;
+}
+
+.preview-tab-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.preview-tab-dirty {
+  color: #f7d56b;
+  font-size: 9px;
+  line-height: 1;
+}
+
+.preview-tab-close {
+  margin-left: auto;
+  width: 16px;
+  height: 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  color: rgba(230, 233, 238, 0.72);
+  transition:
+    background 0.15s ease,
+    color 0.15s ease;
+}
+
+.preview-tab-close:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text-main);
+}
+
+.preview-tab-menu {
+  position: fixed;
+  z-index: 50;
+  min-width: 120px;
+  padding: 6px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: rgba(20, 24, 30, 0.98);
+  box-shadow: var(--shadow);
+  display: grid;
+  gap: 4px;
+}
+
+.preview-tab-menu-item {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  color: var(--text-main);
+  border-radius: 6px;
+  padding: 7px 10px;
+  text-align: left;
+  font-size: 12px;
+}
+
+.preview-tab-menu-item:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.preview-tab-menu-item.danger {
+  color: var(--red);
+}
+
 .preview-recent {
   display: flex;
   gap: 8px;
@@ -1006,6 +1166,13 @@ textarea {
   margin-left: auto;
 }
 
+.preview-text-stage {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
 .preview-actions button,
 .ghost-button,
 .launch-button,
@@ -1027,13 +1194,16 @@ textarea {
   font-size: 11px;
 }
 
+.preview-mode-button,
+.save-button {
+  height: 26px;
+  padding: 0 8px;
+  font-size: 10px;
+}
+
 .preview-actions button,
 .preview-actions span {
   font-size: 9px;
-}
-
-.preview-file-name {
-  font-size: 11px;
 }
 
 .preview-path {
@@ -1114,6 +1284,68 @@ textarea {
 .markdown-preview ol,
 .markdown-preview pre {
   margin: 0 0 0.9em;
+}
+
+.markdown-preview table {
+  width: 100%;
+  border-collapse: collapse;
+  border-spacing: 0;
+  margin: 0 0 0.9em;
+  overflow: hidden;
+  border-radius: 8px;
+}
+
+.markdown-preview th,
+.markdown-preview td {
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  padding: 8px 10px;
+  text-align: left;
+  vertical-align: top;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.markdown-preview th {
+  background: rgba(255, 255, 255, 0.06);
+  font-weight: 600;
+}
+
+.markdown-preview tbody tr:nth-child(even) td {
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.markdown-table-wrap {
+  overflow: auto;
+  margin: 0 0 0.9em;
+}
+
+.markdown-table {
+  width: 100%;
+  border-collapse: collapse;
+  border-spacing: 0;
+  color: var(--text-main);
+}
+
+.markdown-table th,
+.markdown-table td {
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  padding: 8px 10px;
+  text-align: left;
+  vertical-align: top;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.markdown-table th {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text-main);
+  font-weight: 600;
+}
+
+.markdown-table tbody tr:nth-child(even) td {
+  background: rgba(255, 255, 255, 0.025);
 }
 
 .markdown-preview p,
