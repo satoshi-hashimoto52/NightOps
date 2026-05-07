@@ -1,0 +1,28 @@
+# Visual Studio Code
+.vscode/
+*.code-workspace
+.history/
+
+# Python related
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+.env
+.venv
+bin
+include
+lib
+venv/
+env/
+
+# macOS
+.DS_Store
+
+# Node / Vite / Electron
+node_modules/
+dist/
+
+# Local app settings
+settings.json

@@ -1,0 +1,28 @@
+{
+  "name": "nightops",
+  "version": "0.1.0",
+  "private": true,
+  "description": "CLI development companion for CodexCLI",
+  "main": "electron/main.js",
+  "type": "module",
+  "scripts": {
+    "dev": "concurrently \"vite\" \"sleep 1 && electron .\"",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "highlight.js": "^11.11.1",
+    "pdfjs-dist": "^4.8.69",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "recharts": "^3.8.1",
+    "systeminformation": "^5.27.8"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.4.1",
+    "concurrently": "^9.1.2",
+    "electron": "^36.2.0",
+    "vite": "^5.4.19",
+    "wait-on": "^8.0.3"
+  }
+}
