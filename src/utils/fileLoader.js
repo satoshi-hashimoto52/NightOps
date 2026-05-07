@@ -29,6 +29,11 @@ export async function browseDirectory() {
   return api.browseDirectory();
 }
 
+export async function focusWindow() {
+  const api = await getApi();
+  return api.focusWindow();
+}
+
 export async function saveSettings(settings) {
   const api = await getApi();
   return api.saveSettings(settings);

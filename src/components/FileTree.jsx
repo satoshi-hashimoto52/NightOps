@@ -5,6 +5,7 @@ import {
   createDirectory,
   createFile,
   deleteFile,
+  focusWindow,
   listDirectory,
   moveFile,
   renameFile,
@@ -269,6 +270,14 @@ function getSelectionDirectoryPath(node) {
   return node.type === "directory" ? node.path : node.parentPath || "";
 }
 
+async function bringWindowToFront() {
+  try {
+    await focusWindow();
+  } catch {
+    return;
+  }
+}
+
 export default function FileTree({ rootPath, onSelectFile, selectedFilePath, reloadToken = 0, onDropFiles, onNotify }) {
   const [tree, setTree] = useState(null);
   const [expandedPaths, setExpandedPaths] = useState(() => loadExpandedPaths(rootPath));
@@ -398,6 +407,7 @@ export default function FileTree({ rootPath, onSelectFile, selectedFilePath, rel
   }
 
   function openCreateDialog(type) {
+    void bringWindowToFront();
     const directoryPath = getCreationDirectoryPath();
     setCreateDialog({
       type,
@@ -418,6 +428,7 @@ export default function FileTree({ rootPath, onSelectFile, selectedFilePath, rel
     }
 
     try {
+      await bringWindowToFront();
       if (createDialog.type === "file") {
         const created = await createFile(createDialog.directoryPath, nextName);
         pendingSelectionPathsRef.current = [created.path];
@@ -446,6 +457,7 @@ export default function FileTree({ rootPath, onSelectFile, selectedFilePath, rel
 
   async function renameNode(node) {
     closeContextMenu();
+    await bringWindowToFront();
     setRenameDialog({
       node,
       value: node.name
@@ -482,6 +494,7 @@ export default function FileTree({ rootPath, onSelectFile, selectedFilePath, rel
   }
 
   async function handleCopy() {
+    await bringWindowToFront();
     clipboardRef.current = {
       mode: "copy",
       paths: getClipboardSelectionPaths()
@@ -491,6 +504,7 @@ export default function FileTree({ rootPath, onSelectFile, selectedFilePath, rel
   }
 
   async function handleCut() {
+    await bringWindowToFront();
     clipboardRef.current = {
       mode: "cut",
       paths: getClipboardSelectionPaths()
@@ -514,6 +528,7 @@ export default function FileTree({ rootPath, onSelectFile, selectedFilePath, rel
   }
 
   async function handlePaste(targetDirectoryPath) {
+    await bringWindowToFront();
     const { mode, paths } = clipboardRef.current;
     if (!targetDirectoryPath || !mode || !paths.length) {
       return;
@@ -573,11 +588,13 @@ export default function FileTree({ rootPath, onSelectFile, selectedFilePath, rel
   }
 
   async function pasteSelectionInto(node = null) {
+    await bringWindowToFront();
     await handlePaste(getPasteTargetPath(node));
     closeContextMenu();
   }
 
   async function deleteSelectedNodes(nodes) {
+    await bringWindowToFront();
     const topLevelPaths = filterTopLevelPaths(nodes.map((item) => item.path));
     if (topLevelPaths.length === 0) {
       return;
@@ -626,6 +643,7 @@ export default function FileTree({ rootPath, onSelectFile, selectedFilePath, rel
   }
 
   async function handleDropOnDirectory(targetDirectoryPath, dataTransfer) {
+    await bringWindowToFront();
     const pendingDragPaths = pendingInternalDragPathsRef.current || [];
     if (pendingDragPaths.length > 0) {
       if (dataTransfer) {
@@ -864,11 +882,13 @@ export default function FileTree({ rootPath, onSelectFile, selectedFilePath, rel
 
   async function handleReveal(node) {
     closeContextMenu();
+    await bringWindowToFront();
     await revealFile(node.path);
   }
 
   async function handleCopyPath(node) {
     closeContextMenu();
+    await bringWindowToFront();
     await copyFilePath(node.path);
   }
 
@@ -1372,13 +1392,13 @@ export default function FileTree({ rootPath, onSelectFile, selectedFilePath, rel
       const isActive = activePath === node.path;
       const isDropTarget = dragTargetPath === node.path;
       const isClipboardCut = clipboardMode === "cut" && clipboardRef.current.paths.includes(node.path);
-      const rowClassName = `tree-row ${node.type === "directory" ? "tree-row-directory" : `tree-row-file ${getFileTypeClass(node.name)} ${isPreviewableFile(node.name) ? "" : "tree-row-unpreviewable"}`} ${isSelected ? "selected" : ""} ${isActive ? "active" : ""} ${isDropTarget ? "tree-row-drop-target" : ""} ${isClipboardCut ? "tree-row-cut" : ""}`;
+      const rowClassName = `tree-row ${node.type === "directory" ? "tree-row-directory" : `tree-row-file ${getFileTypeClass(node.name)} ${isPreviewableFile(node.name) ? "" : "tree-row-unpreviewable"}`} ${node.ignored ? "tree-row-ignored" : ""} ${isSelected ? "selected" : ""} ${isActive ? "active" : ""} ${isDropTarget ? "tree-row-drop-target" : ""} ${isClipboardCut ? "tree-row-cut" : ""}`;
 
       if (node.path === rootPath) {
         return (
           <div
             key={row.key}
-          className={`tree-row tree-row-root ${isSelected ? "selected" : ""} ${isActive ? "active" : ""} ${isDropTarget ? "tree-row-drop-target" : ""}`}
+          className={`tree-row tree-row-root ${node.ignored ? "tree-row-ignored" : ""} ${isSelected ? "selected" : ""} ${isActive ? "active" : ""} ${isDropTarget ? "tree-row-drop-target" : ""}`}
             style={{ height: `${ROW_HEIGHT}px`, paddingLeft: `${10 + level * 14}px` }}
           >
             <button

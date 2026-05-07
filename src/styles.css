@@ -736,6 +736,18 @@ textarea {
   opacity: 0.5;
 }
 
+.tree-row-ignored {
+  opacity: 0.68;
+}
+
+.tree-row-ignored .tree-name {
+  color: rgba(170, 176, 183, 0.72) !important;
+}
+
+.tree-row-ignored .tree-icon {
+  color: rgba(170, 176, 183, 0.7);
+}
+
 .tree-row-drop-target {
   background: linear-gradient(90deg, rgba(245, 197, 66, 0.24), rgba(245, 197, 66, 0.1));
   box-shadow:

@@ -50,6 +50,7 @@ let activeWatchedPath = "";
 let heicQueue = Promise.resolve();
 const pendingExternalDropPaths = [];
 const heicCache = new Map();
+const ignoreCache = new Map();
 
 function broadcastExternalDropPaths(paths) {
   for (const window of BrowserWindow.getAllWindows()) {
@@ -104,6 +105,22 @@ function createWindow() {
   } else {
     win.loadFile(path.join(app.getAppPath(), "dist", "index.html"));
   }
+}
+
+function focusWindow() {
+  const window = BrowserWindow.getAllWindows()[0];
+  if (!window || window.isDestroyed()) {
+    return { ok: false };
+  }
+
+  if (window.isMinimized()) {
+    window.restore();
+  }
+
+  window.show();
+  window.focus();
+  window.moveTop();
+  return { ok: true };
 }
 
 app.on("browser-window-created", (_event, window) => {
@@ -246,7 +263,7 @@ async function readCodexHistory() {
 
 async function listDirectory(dirPath) {
   const entries = await fs.readdir(dirPath, { withFileTypes: true });
-  return entries
+  const normalizedEntries = await Promise.all(entries
     .filter((entry) => !entry.name.startsWith(".DS_Store"))
     .sort((a, b) => {
       if (a.isDirectory() && !b.isDirectory()) {
@@ -257,11 +274,34 @@ async function listDirectory(dirPath) {
       }
       return a.name.localeCompare(b.name);
     })
-    .map((entry) => ({
-      name: entry.name,
-      path: path.join(dirPath, entry.name),
-      type: entry.isDirectory() ? "directory" : "file"
+    .map(async (entry) => {
+      const ignored = await isIgnoredPath(dirPath, entry.name);
+      return {
+        name: entry.name,
+        path: path.join(dirPath, entry.name),
+        type: entry.isDirectory() ? "directory" : "file",
+        ignored
+      };
     }));
+  return normalizedEntries;
+}
+
+async function isIgnoredPath(dirPath, entryName) {
+  if (entryName === ".gitignore") {
+    return true;
+  }
+
+  const cacheKey = `${dirPath}::${entryName}`;
+  if (ignoreCache.has(cacheKey)) {
+    return ignoreCache.get(cacheKey);
+  }
+
+  const pending = execFileAsync("git", ["-C", dirPath, "check-ignore", "-q", "--", entryName])
+    .then(() => true)
+    .catch(() => false);
+
+  ignoreCache.set(cacheKey, pending);
+  return pending;
 }
 
 async function readFileContent(filePath) {
@@ -835,6 +875,7 @@ ipcMain.handle("settings:get", async () => readSettings());
 ipcMain.handle("settings:save", async (_event, settings) => saveSettings(settings));
 ipcMain.handle("system:status", async (_event, directoryPath) => getSystemStatus(directoryPath));
 ipcMain.handle("fs:browse-directory", async () => browseDirectory());
+ipcMain.handle("window:focus", async () => focusWindow());
 ipcMain.handle("fs:root", async () => {
   const settings = await readSettings();
   return { path: settings.initialDirectory };

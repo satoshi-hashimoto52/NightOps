@@ -2,6 +2,7 @@
 .vscode/
 *.code-workspace
 .history/
+.gitignore
 
 # Python related
 __pycache__/

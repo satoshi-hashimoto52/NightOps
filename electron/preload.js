@@ -8,6 +8,7 @@ const exposedApi = {
   getSettings: () => ipcRenderer.invoke("settings:get"),
   saveSettings: (settings) => ipcRenderer.invoke("settings:save", settings),
   getSystemStatus: (directoryPath) => ipcRenderer.invoke("system:status", directoryPath),
+  focusWindow: () => ipcRenderer.invoke("window:focus"),
   browseDirectory: () => ipcRenderer.invoke("fs:browse-directory"),
   getRootDirectory: () => ipcRenderer.invoke("fs:root"),
   listDirectory: (dirPath) => ipcRenderer.invoke("fs:list", dirPath),
