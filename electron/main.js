@@ -38,6 +38,7 @@ const DEFAULT_CODEX_MODELS = [
   { id: "gpt-5.2", factor: 0.9 }
 ];
 const DEFAULT_MARKDOWN_HEADING_COLORS = ["#8fd3ff", "#7bdc6a", "#f5c542", "#c18cff", "#e88787", "#9dd6c4"];
+const DEFAULT_MARKDOWN_HEADING_SIZES = [1.65, 1.4, 1.22, 1.08, 0.98, 0.98];
 const CONTENT_SECURITY_POLICY = [
   "default-src 'self'",
   "script-src 'self' 'unsafe-inline'",
@@ -156,12 +157,32 @@ function quoteShellArg(value) {
   return `'${String(value ?? "").replace(/'/g, `'\\''`)}'`;
 }
 
+function normalizeMarkdownHeadingSizes(value, fallback) {
+  if (!Array.isArray(value)) {
+    return fallback;
+  }
+
+  const normalized = value.map((item, index) => {
+    const fallbackValue = fallback[index] ?? fallback[0] ?? 1;
+    const parsed = Number(item);
+    if (!Number.isFinite(parsed) || parsed <= 0) {
+      return fallbackValue;
+    }
+    return Math.min(3, Math.max(0.5, parsed));
+  });
+
+  return normalized.length === 6 ? normalized : fallback;
+}
+
 function isTextFile(filePath) {
   const ext = path.extname(filePath).toLowerCase();
   const baseName = path.basename(filePath).toLowerCase();
   const textExts = new Set([
     ".txt",
     ".md",
+    ".markdown",
+    ".mdown",
+    ".mkdn",
     ".js",
     ".jsx",
     ".ts",
@@ -268,6 +289,7 @@ async function readCodexHistory(settings = null) {
     let tokenEstimate = 0;
     let tokenEstimate5h = 0;
     let tokenEstimateWeek = 0;
+    let previousTokenEstimate = 0;
 
     for (const line of lines) {
       try {
@@ -277,6 +299,7 @@ async function readCodexHistory(settings = null) {
         }
         const tokenCount = estimateCodexTokens(entry.text || "");
         tokenEstimate += tokenCount;
+        previousTokenEstimate = tokenCount;
         const entryTime = new Date(Number(entry.ts) * 1000);
         if (settings && !Number.isNaN(entryTime.getTime())) {
           if (entryTime >= limit5hWindowStart) {
@@ -297,7 +320,8 @@ async function readCodexHistory(settings = null) {
       sessionCount: sessionIds.size,
       tokenEstimate,
       tokenEstimate5h,
-      tokenEstimateWeek
+      tokenEstimateWeek,
+      previousTokenEstimate
     };
   } catch (error) {
     return {
@@ -307,6 +331,7 @@ async function readCodexHistory(settings = null) {
       tokenEstimate: 0,
       tokenEstimate5h: 0,
       tokenEstimateWeek: 0,
+      previousTokenEstimate: 0,
       error: error.message
     };
   }
@@ -608,6 +633,7 @@ async function readSettings() {
     backgroundBlur: 28,
     uiBackgroundBlur: 28,
     markdownHeadingColors: DEFAULT_MARKDOWN_HEADING_COLORS,
+    markdownHeadingSizes: DEFAULT_MARKDOWN_HEADING_SIZES,
     markdownHeadingColor: DEFAULT_MARKDOWN_HEADING_COLORS[0],
     ...DEFAULT_LIMITS_SETTINGS
   };
@@ -653,6 +679,9 @@ async function readSettings() {
       : typeof parsed.markdownHeadingColor === "string"
         ? Array.from({ length: 6 }, () => normalizeHexColor(parsed.markdownHeadingColor, defaultSettings.markdownHeadingColors[0]))
         : defaultSettings.markdownHeadingColors;
+    const markdownHeadingSizes = Array.isArray(parsed.markdownHeadingSizes)
+      ? normalizeMarkdownHeadingSizes(parsed.markdownHeadingSizes, defaultSettings.markdownHeadingSizes)
+      : defaultSettings.markdownHeadingSizes;
     const markdownHeadingColor = markdownHeadingColors[0];
     const codexLimitSettings = normalizeCodexLimitSettings(
       {
@@ -699,6 +728,7 @@ async function readSettings() {
           limit5hBaselineTokenEstimate,
           weeklyBaselineTokenEstimate,
           markdownHeadingColors,
+          markdownHeadingSizes,
           markdownHeadingColor
         };
       }
@@ -717,6 +747,7 @@ async function readSettings() {
         limit5hBaselineTokenEstimate,
         weeklyBaselineTokenEstimate,
         markdownHeadingColors,
+        markdownHeadingSizes,
         markdownHeadingColor
       };
     } catch {
@@ -735,6 +766,7 @@ async function readSettings() {
         limit5hBaselineTokenEstimate,
         weeklyBaselineTokenEstimate,
         markdownHeadingColors,
+        markdownHeadingSizes,
         markdownHeadingColor
       };
     }
@@ -786,6 +818,10 @@ async function saveSettings(settings) {
       settings.markdownHeadingColors,
       current.markdownHeadingColors || DEFAULT_MARKDOWN_HEADING_COLORS
     ),
+    markdownHeadingSizes: normalizeMarkdownHeadingSizes(
+      settings.markdownHeadingSizes,
+      current.markdownHeadingSizes || DEFAULT_MARKDOWN_HEADING_SIZES
+    ),
     limit5hResetTime: normalizeTimeString(
       settings.limit5hResetTime,
       current.limit5hResetTime || DEFAULT_LIMITS_SETTINGS.limit5hResetTime
@@ -816,6 +852,7 @@ async function saveSettings(settings) {
         : current.weeklyBaselineTokenEstimate
   };
   nextSettings.markdownHeadingColor = nextSettings.markdownHeadingColors[0];
+  nextSettings.markdownHeadingSizes = nextSettings.markdownHeadingSizes || DEFAULT_MARKDOWN_HEADING_SIZES;
   const nextModelIds = nextSettings.codexModels.map((item) => item.id);
   nextSettings.selectedLaunchModel = nextModelIds.includes(nextSettings.selectedLaunchModel)
     ? nextSettings.selectedLaunchModel

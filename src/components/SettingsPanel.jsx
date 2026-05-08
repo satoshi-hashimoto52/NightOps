@@ -14,6 +14,7 @@ import {
 const DEFAULT_MODEL_OPTIONS = ["gpt-5.5", "gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex", "gpt-5.2"];
 
 const DEFAULT_MARKDOWN_HEADING_COLORS = ["#8fd3ff", "#7bdc6a", "#f5c542", "#c18cff", "#e88787", "#9dd6c4"];
+const DEFAULT_MARKDOWN_HEADING_SIZES = [1.65, 1.4, 1.22, 1.08, 0.98, 0.98];
 function getInitialPanelPosition() {
   if (typeof window === "undefined") {
     return { x: 16, y: 16 };
@@ -42,7 +43,13 @@ function FieldHelp({ children }) {
   return <span className="field-help">{children}</span>;
 }
 
-export default function SettingsPanel({ settings, onClose, onSave, onPreviewMarkdownHeadingColorsChange }) {
+export default function SettingsPanel({
+  settings,
+  onClose,
+  onSave,
+  onPreviewMarkdownHeadingColorsChange,
+  onPreviewMarkdownHeadingSizesChange
+}) {
   const panelRef = useRef(null);
   const dragRef = useRef({ dragging: false, offsetX: 0, offsetY: 0, width: 0, height: 0 });
   const resizeRef = useRef({ resizing: false, startX: 0, startY: 0, width: 0, height: 0 });
@@ -70,6 +77,11 @@ export default function SettingsPanel({ settings, onClose, onSave, onPreviewMark
       ? settings.markdownHeadingColors.slice(0, 6)
       : DEFAULT_MARKDOWN_HEADING_COLORS
   );
+  const [markdownHeadingSizes, setMarkdownHeadingSizes] = useState(
+    Array.isArray(settings.markdownHeadingSizes) && settings.markdownHeadingSizes.length > 0
+      ? settings.markdownHeadingSizes.slice(0, 6)
+      : DEFAULT_MARKDOWN_HEADING_SIZES
+  );
   const [newModelId, setNewModelId] = useState("");
   const [newModelFactor, setNewModelFactor] = useState("1");
   const [error, setError] = useState("");
@@ -79,6 +91,13 @@ export default function SettingsPanel({ settings, onClose, onSave, onPreviewMark
   const [tokenEstimateWeek, setTokenEstimateWeek] = useState(0);
   const [panelPosition, setPanelPosition] = useState(() => getInitialPanelPosition());
   const [panelSize, setPanelSize] = useState(() => getInitialPanelSize());
+  const markdownRows = useMemo(() => {
+    const rows = [];
+    for (let index = 0; index < 6; index += 3) {
+      rows.push([index, index + 1, index + 2].filter((item) => item < 6));
+    }
+    return rows;
+  }, []);
 
   const modelOptions = useMemo(
     () => Array.from(new Set([...DEFAULT_MODEL_OPTIONS, ...models.map((item) => item.id).filter(Boolean)])),
@@ -118,6 +137,11 @@ export default function SettingsPanel({ settings, onClose, onSave, onPreviewMark
       Array.isArray(settings.markdownHeadingColors) && settings.markdownHeadingColors.length > 0
         ? settings.markdownHeadingColors.slice(0, 6)
         : DEFAULT_MARKDOWN_HEADING_COLORS
+    );
+    setMarkdownHeadingSizes(
+      Array.isArray(settings.markdownHeadingSizes) && settings.markdownHeadingSizes.length > 0
+        ? settings.markdownHeadingSizes.slice(0, 6)
+        : DEFAULT_MARKDOWN_HEADING_SIZES
     );
   }, [settings]);
 
@@ -330,7 +354,8 @@ export default function SettingsPanel({ settings, onClose, onSave, onPreviewMark
         containerOpacity: nextContainerOpacity,
         backgroundBlur: nextBackgroundBlur,
         uiBackgroundBlur: nextUiBackgroundBlur,
-        markdownHeadingColors
+        markdownHeadingColors,
+        markdownHeadingSizes
       });
       setError("");
     } catch (saveError) {
@@ -468,24 +493,50 @@ export default function SettingsPanel({ settings, onClose, onSave, onPreviewMark
           <section className="settings-section">
             <div className="settings-section-title">Markdown</div>
             <div className="settings-appearance-grid settings-markdown-grid">
-              {markdownHeadingColors.map((color, index) => (
-                <label key={index} className="field">
-                  <span>{`Markdown H${index + 1} Color`}</span>
-                  <FieldHelp>{`H${index + 1}の色。`}</FieldHelp>
-                  <input
-                    type="color"
-                    value={color}
-                    onChange={(event) => {
-                      const nextColors = markdownHeadingColors.map((item, itemIndex) =>
-                        itemIndex === index ? event.target.value : item
-                      );
-                      setMarkdownHeadingColors(nextColors);
-                      if (onPreviewMarkdownHeadingColorsChange) {
-                        onPreviewMarkdownHeadingColorsChange(nextColors);
-                      }
-                    }}
-                  />
-                </label>
+              {markdownRows.map((row, rowIndex) => (
+                <div key={rowIndex} className="settings-markdown-row">
+                  {row.map((index) => (
+                    <div key={index} className="settings-markdown-item">
+                      <label className="field settings-markdown-color-field">
+                        <span>{`Markdown H${index + 1} 色`}</span>
+                        <FieldHelp>{`H${index + 1}の色。`}</FieldHelp>
+                        <input
+                          type="color"
+                          value={markdownHeadingColors[index]}
+                          onChange={(event) => {
+                            const nextColors = markdownHeadingColors.map((item, itemIndex) =>
+                              itemIndex === index ? event.target.value : item
+                            );
+                            setMarkdownHeadingColors(nextColors);
+                            if (onPreviewMarkdownHeadingColorsChange) {
+                              onPreviewMarkdownHeadingColorsChange(nextColors);
+                            }
+                          }}
+                        />
+                      </label>
+                      <label className="field settings-markdown-size-field">
+                        <span>{`Markdown H${index + 1} サイズ`}</span>
+                        <FieldHelp>{`H${index + 1}の文字サイズ。`}</FieldHelp>
+                        <input
+                          type="number"
+                          min="0.5"
+                          max="3"
+                          step="0.05"
+                          value={markdownHeadingSizes[index] ?? DEFAULT_MARKDOWN_HEADING_SIZES[index]}
+                          onChange={(event) => {
+                            const nextSizes = markdownHeadingSizes.map((item, itemIndex) =>
+                              itemIndex === index ? event.target.value : item
+                            );
+                            setMarkdownHeadingSizes(nextSizes);
+                            if (onPreviewMarkdownHeadingSizesChange) {
+                              onPreviewMarkdownHeadingSizesChange(nextSizes);
+                            }
+                          }}
+                        />
+                      </label>
+                    </div>
+                  ))}
+                </div>
               ))}
             </div>
           </section>

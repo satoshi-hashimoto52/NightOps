@@ -17,12 +17,21 @@ function getRemainingTone(value) {
   return "danger";
 }
 
-function Metric({ value, meta = "", tone = "default", barValue = null, barClassName = "", plain = false }) {
+function Metric({
+  value,
+  meta = "",
+  subMeta = "",
+  tone = "default",
+  barValue = null,
+  barClassName = "",
+  plain = false
+}) {
   return (
     <div className={`metric metric-${tone} ${plain ? "metric-plain" : ""} ${typeof barValue === "number" ? "metric-with-bar" : ""}`}>
       <div className="metric-content">
         <strong className="metric-value">{value}</strong>
         {meta ? <span className="metric-meta">{meta}</span> : null}
+        {subMeta ? <span className="metric-submeta">{subMeta}</span> : null}
       </div>
       {typeof barValue === "number" ? (
         <div className="metric-bar" aria-hidden="true">
@@ -32,6 +41,20 @@ function Metric({ value, meta = "", tone = "default", barValue = null, barClassN
           />
         </div>
       ) : null}
+    </div>
+  );
+}
+
+function TokMetric({ value, subMeta = "" }) {
+  return (
+    <div className="metric metric-plain metric-tok">
+      <div className="metric-tok-content">
+        <div className="metric-tok-main">
+          <span className="metric-tok-label">TOK :</span>
+          <strong className="metric-tok-number">{value}</strong>
+        </div>
+        <div className="metric-tok-submeta">{subMeta}</div>
+      </div>
     </div>
   );
 }
@@ -59,7 +82,8 @@ export default function TopBar({
     sessionCount: 0,
     tokenEstimate: 0,
     tokenEstimate5h: 0,
-    tokenEstimateWeek: 0
+    tokenEstimateWeek: 0,
+    previousTokenEstimate: 0
   });
 
   const usage = calculateUsage({
@@ -82,7 +106,8 @@ export default function TopBar({
             sessionCount: Number(nextCodex.sessionCount) || 0,
             tokenEstimate: Number(nextCodex.tokenEstimate) || 0,
             tokenEstimate5h: Number(nextCodex.tokenEstimate5h) || 0,
-            tokenEstimateWeek: Number(nextCodex.tokenEstimateWeek) || 0
+            tokenEstimateWeek: Number(nextCodex.tokenEstimateWeek) || 0,
+            previousTokenEstimate: Number(nextCodex.previousTokenEstimate) || 0
           });
           setHistory((prev) =>
             [...prev, { cpu: nextSystem.cpu || 0, mem: nextSystem.memoryPercent || 0 }].slice(-30)
@@ -102,7 +127,8 @@ export default function TopBar({
             sessionCount: 0,
             tokenEstimate: 0,
             tokenEstimate5h: 0,
-            tokenEstimateWeek: 0
+            tokenEstimateWeek: 0,
+            previousTokenEstimate: 0
           });
           setHistory((prev) => [...prev, { cpu: 0, mem: 0 }].slice(-30));
         }
@@ -166,7 +192,10 @@ export default function TopBar({
             meta={limit5hNextResetAt ? `next ${formatResetDateTime(new Date(limit5hNextResetAt))}` : ""}
             tone={getRemainingTone(usage.limit5hRemaining)}
           />
-          <Metric plain value={`TOK : ${codex.tokenEstimate.toLocaleString().padStart(7, " ")}`} />
+          <TokMetric
+            value={codex.tokenEstimate.toLocaleString().padStart(7, " ")}
+            subMeta={Number(codex.previousTokenEstimate || 0).toLocaleString()}
+          />
           <Metric
             plain
             value={`WEEK : ${`${Math.round(usage.weeklyRemaining)}%`.padStart(5, " ")}`}

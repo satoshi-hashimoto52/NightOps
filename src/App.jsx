@@ -84,6 +84,7 @@ export default function App() {
   const [launchOpen, setLaunchOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [previewMarkdownHeadingColors, setPreviewMarkdownHeadingColors] = useState([]);
+  const [previewMarkdownHeadingSizes, setPreviewMarkdownHeadingSizes] = useState([]);
   const [notice, setNotice] = useState("");
   const [treeCollapsed, setTreeCollapsed] = useState(false);
   const [sidebarWidth, setSidebarWidth] = useState(140);
@@ -110,7 +111,8 @@ export default function App() {
     containerOpacity: 0.46,
     backgroundBlur: 28,
     uiBackgroundBlur: 28,
-    markdownHeadingColors: ["#8fd3ff", "#7bdc6a", "#f5c542", "#c18cff", "#e88787", "#9dd6c4"]
+    markdownHeadingColors: ["#8fd3ff", "#7bdc6a", "#f5c542", "#c18cff", "#e88787", "#9dd6c4"],
+    markdownHeadingSizes: [1.65, 1.4, 1.22, 1.08, 0.98, 0.98]
   });
   const [systemStatus, setSystemStatus] = useState({
     userName: "hashimoto",
@@ -165,6 +167,10 @@ export default function App() {
   useEffect(() => {
     setPreviewMarkdownHeadingColors(settings.markdownHeadingColors || []);
   }, [settings.markdownHeadingColors]);
+
+  useEffect(() => {
+    setPreviewMarkdownHeadingSizes(settings.markdownHeadingSizes || []);
+  }, [settings.markdownHeadingSizes]);
 
   useEffect(() => {
     if (!rootPath) {
@@ -424,6 +430,21 @@ export default function App() {
     setBrowseMenu(null);
   }
 
+  function openBrowseMenuFromButton(target) {
+    if (!rootPath || !target) {
+      return;
+    }
+
+    const rect = target.getBoundingClientRect();
+    const menuWidth = 200;
+    const menuHeight = 88;
+    const padding = 8;
+    setBrowseMenu({
+      x: Math.max(padding, Math.min(rect.left, window.innerWidth - menuWidth - padding)),
+      y: Math.max(padding, Math.min(rect.bottom + 6, window.innerHeight - menuHeight - padding))
+    });
+  }
+
   useEffect(() => {
     function handlePointerDown() {
       setBrowseMenu(null);
@@ -442,10 +463,12 @@ export default function App() {
     try {
       setSettings(nextSettings);
       setPreviewMarkdownHeadingColors(nextSettings.markdownHeadingColors || []);
+      setPreviewMarkdownHeadingSizes(nextSettings.markdownHeadingSizes || []);
       setRootPath(nextSettings.initialDirectory || "");
       const saved = await saveSettings(nextSettings);
       setSettings(saved);
       setPreviewMarkdownHeadingColors(saved.markdownHeadingColors || []);
+      setPreviewMarkdownHeadingSizes(saved.markdownHeadingSizes || []);
       setRootPath(saved.initialDirectory);
       if (!options.keepOpen) {
         setSettingsOpen(false);
@@ -595,46 +618,15 @@ export default function App() {
                 return;
               }
               event.preventDefault();
-              if (!rootPath) {
-                return;
-              }
-              setBrowseMenu({
-                x: event.clientX,
-                y: event.clientY
-              });
+              openBrowseMenuFromButton(event.currentTarget);
             }}
             onContextMenu={(event) => {
               event.preventDefault();
-              if (!rootPath) {
-                return;
-              }
-              setBrowseMenu({
-                x: event.clientX,
-                y: event.clientY
-              });
+              openBrowseMenuFromButton(event.currentTarget);
             }}
           >
             Browse
           </button>
-          {browseMenu ? (
-            <div
-              className="window-browse-menu"
-              style={{ left: `${browseMenu.x}px`, top: `${browseMenu.y}px` }}
-              onPointerDown={(event) => event.stopPropagation()}
-              onContextMenu={(event) => {
-                event.preventDefault();
-                event.stopPropagation();
-              }}
-              onClick={(event) => event.stopPropagation()}
-            >
-              <button type="button" className="window-browse-menu-item" onClick={handleCopyRootPath} disabled={!rootPath}>
-                Copy Full Path
-              </button>
-              <button type="button" className="window-browse-menu-item" onClick={handleRevealRootPath} disabled={!rootPath}>
-                Show in Finder
-              </button>
-            </div>
-          ) : null}
         </div>
         <button className="window-launch-button" onClick={() => setLaunchOpen(true)}>
           Launch
@@ -643,6 +635,25 @@ export default function App() {
           ⚙
         </button>
       </div>
+      {browseMenu ? (
+        <div
+          className="window-browse-menu"
+          style={{ left: `${browseMenu.x}px`, top: `${browseMenu.y}px` }}
+          onPointerDown={(event) => event.stopPropagation()}
+          onContextMenu={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+          }}
+          onClick={(event) => event.stopPropagation()}
+        >
+          <button type="button" className="window-browse-menu-item" onClick={handleCopyRootPath} disabled={!rootPath}>
+            Copy Full Path
+          </button>
+          <button type="button" className="window-browse-menu-item" onClick={handleRevealRootPath} disabled={!rootPath}>
+            Show in Finder
+          </button>
+        </div>
+      ) : null}
       <TopBar
         codexModels={settings.codexModels}
         usageModel={settings.usageModel}
@@ -696,6 +707,7 @@ export default function App() {
             onSelectFile={handleSelectFile}
             onSaved={() => setNotice("Saved")}
             markdownHeadingColors={previewMarkdownHeadingColors.length > 0 ? previewMarkdownHeadingColors : settings.markdownHeadingColors}
+            markdownHeadingSizes={previewMarkdownHeadingSizes.length > 0 ? previewMarkdownHeadingSizes : settings.markdownHeadingSizes}
           />
         </main>
       </div>
@@ -717,10 +729,12 @@ export default function App() {
           settings={settings}
           onClose={() => {
             setPreviewMarkdownHeadingColors(settings.markdownHeadingColors || []);
+            setPreviewMarkdownHeadingSizes(settings.markdownHeadingSizes || []);
             setSettingsOpen(false);
           }}
           onSave={handleSaveSettings}
           onPreviewMarkdownHeadingColorsChange={setPreviewMarkdownHeadingColors}
+          onPreviewMarkdownHeadingSizesChange={setPreviewMarkdownHeadingSizes}
         />
       ) : null}
       {notice ? <div className="toast">{notice}</div> : null}

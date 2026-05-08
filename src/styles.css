@@ -15,6 +15,12 @@
   --markdown-heading-color-4: #c18cff;
   --markdown-heading-color-5: #e88787;
   --markdown-heading-color-6: #9dd6c4;
+  --markdown-heading-size-1: 1.65;
+  --markdown-heading-size-2: 1.4;
+  --markdown-heading-size-3: 1.22;
+  --markdown-heading-size-4: 1.08;
+  --markdown-heading-size-5: 0.98;
+  --markdown-heading-size-6: 0.98;
   --shadow: 0 8px 20px rgba(0, 0, 0, 0.14);
   --app-shell-alpha: 0.32;
   --surface-alpha: 0.46;
@@ -155,7 +161,7 @@ textarea {
 
 .window-browse-menu {
   position: fixed;
-  z-index: 40;
+  z-index: 5000;
   display: flex;
   flex-direction: column;
   gap: 4px;
@@ -174,6 +180,9 @@ textarea {
   border-radius: 8px;
   padding: 8px 10px;
   text-align: left;
+  font-size: 11px;
+  line-height: 1;
+  font-family: inherit;
 }
 
 .window-browse-menu-item:hover:not(:disabled) {
@@ -329,7 +338,7 @@ textarea {
   display: grid;
   grid-template-columns: max-content max-content;
   column-gap: 12px;
-  row-gap: 2px;
+  row-gap: 1px;
   align-content: center;
 }
 
@@ -444,6 +453,16 @@ textarea {
   text-overflow: ellipsis;
 }
 
+.metric-submeta {
+  color: #ff5cf0;
+  font-size: 11px;
+  line-height: 0.95;
+  font-weight: 700;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .topbar-group-monitor .metric-content {
   gap: 1px;
 }
@@ -453,11 +472,52 @@ textarea {
 }
 
 .topbar-group-codex .metric-content {
-  gap: 1px;
+  gap: 0;
+}
+
+.metric-tok {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  width: max-content;
+}
+
+.metric-tok-content {
+  display: grid;
+  grid-template-rows: auto auto;
+  justify-items: stretch;
+  gap: 0;
+  width: max-content;
+}
+
+.metric-tok-main {
+  display: grid;
+  grid-template-columns: auto auto;
+  column-gap: 4px;
+  align-items: baseline;
+  width: max-content;
+  justify-content: start;
+}
+
+.metric-tok-label,
+.metric-tok-number {
+  font-size: 10px;
+  line-height: 1;
+}
+
+.metric-tok-submeta {
+  margin-left: 0;
+  padding-left: 0;
+  margin-top: -1px;
+  width: 100%;
+  text-align: right;
+  display: block;
+  justify-self: stretch;
 }
 
 .topbar-group-codex .metric-value,
-.topbar-group-codex .metric-meta {
+.topbar-group-codex .metric-meta,
+.topbar-group-codex .metric-submeta {
   line-height: 1;
 }
 
@@ -1383,47 +1443,32 @@ textarea {
 
 .markdown-preview h1 {
   color: var(--markdown-heading-color-1);
+  font-size: calc(var(--markdown-heading-size-1, 1.65) * 1em);
 }
 
 .markdown-preview h2 {
   color: var(--markdown-heading-color-2);
+  font-size: calc(var(--markdown-heading-size-2, 1.4) * 1em);
 }
 
 .markdown-preview h3 {
   color: var(--markdown-heading-color-3);
+  font-size: calc(var(--markdown-heading-size-3, 1.22) * 1em);
 }
 
 .markdown-preview h4 {
   color: var(--markdown-heading-color-4);
+  font-size: calc(var(--markdown-heading-size-4, 1.08) * 1em);
 }
 
 .markdown-preview h5 {
   color: var(--markdown-heading-color-5);
+  font-size: calc(var(--markdown-heading-size-5, 0.98) * 1em);
 }
 
 .markdown-preview h6 {
   color: var(--markdown-heading-color-6);
-}
-
-.markdown-preview h1 {
-  font-size: 1.65em;
-}
-
-.markdown-preview h2 {
-  font-size: 1.4em;
-}
-
-.markdown-preview h3 {
-  font-size: 1.22em;
-}
-
-.markdown-preview h4 {
-  font-size: 1.08em;
-}
-
-.markdown-preview h5,
-.markdown-preview h6 {
-  font-size: 0.98em;
+  font-size: calc(var(--markdown-heading-size-6, 0.98) * 1em);
 }
 
 .markdown-preview p,
@@ -1544,32 +1589,32 @@ textarea {
 
 .markdown-heading-level-1 .markdown-heading-label {
   color: var(--markdown-heading-color-1);
-  font-size: 1.65em;
+  font-size: calc(var(--markdown-heading-size-1, 1.65) * 1em);
 }
 
 .markdown-heading-level-2 .markdown-heading-label {
   color: var(--markdown-heading-color-2);
-  font-size: 1.4em;
+  font-size: calc(var(--markdown-heading-size-2, 1.4) * 1em);
 }
 
 .markdown-heading-level-3 .markdown-heading-label {
   color: var(--markdown-heading-color-3);
-  font-size: 1.22em;
+  font-size: calc(var(--markdown-heading-size-3, 1.22) * 1em);
 }
 
 .markdown-heading-level-4 .markdown-heading-label {
   color: var(--markdown-heading-color-4);
-  font-size: 1.08em;
+  font-size: calc(var(--markdown-heading-size-4, 1.08) * 1em);
 }
 
 .markdown-heading-level-5 .markdown-heading-label {
   color: var(--markdown-heading-color-5);
-  font-size: 0.98em;
+  font-size: calc(var(--markdown-heading-size-5, 0.98) * 1em);
 }
 
 .markdown-heading-level-6 .markdown-heading-label {
   color: var(--markdown-heading-color-6);
-  font-size: 0.98em;
+  font-size: calc(var(--markdown-heading-size-6, 0.98) * 1em);
 }
 
 .markdown-preview code {
@@ -1584,6 +1629,56 @@ textarea {
     Monaco,
     Consolas,
     monospace;
+}
+
+.markdown-inline-code {
+  background: rgba(124, 255, 0, 0.12) !important;
+  color: #7cff00 !important;
+  border: 1px solid rgba(124, 255, 0, 0.2);
+}
+
+.markdown-inline-blue {
+  color: #67a9ff;
+  font-weight: 600;
+}
+
+.markdown-inline-red {
+  color: #ff7070;
+  font-weight: 600;
+}
+
+.markdown-code-shell {
+  position: relative;
+  margin: 0 0 0.9em;
+}
+
+.markdown-code-shell .markdown-code-block {
+  margin: 0;
+  padding-top: 34px;
+}
+
+.markdown-code-copy-button {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 1;
+  width: 26px;
+  height: 26px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 7px;
+  background: rgba(27, 31, 36, 0.82);
+  color: #f2f5f9;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  font-size: 13px;
+  line-height: 1;
+}
+
+.markdown-code-copy-button:hover {
+  border-color: rgba(245, 197, 66, 0.45);
+  background: rgba(39, 45, 55, 0.96);
 }
 
 .markdown-preview pre {
@@ -1925,7 +2020,42 @@ textarea {
 }
 
 .settings-markdown-grid {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.settings-markdown-row {
+  display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  align-items: start;
+}
+
+.settings-markdown-item {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+  background: rgba(27, 31, 36, calc(var(--surface-alpha) + 0.04));
+}
+
+.settings-markdown-color-field,
+.settings-markdown-size-field {
+  min-width: 0;
+}
+
+.settings-markdown-color-field {
+  padding-bottom: 6px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.settings-markdown-item .field span {
+  color: var(--text-main);
+}
+
+.settings-markdown-item .field .field-help {
+  color: rgba(170, 176, 183, 0.9);
 }
 
 .settings-reset-grid {

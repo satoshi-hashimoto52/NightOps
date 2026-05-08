@@ -19,6 +19,9 @@ const TREE_STATE_KEY_PREFIX = "nightops:tree:expanded:";
 const PREVIEWABLE_EXTENSIONS = new Set([
   "txt",
   "md",
+  "markdown",
+  "mdown",
+  "mkdn",
   "js",
   "jsx",
   "ts",
@@ -164,8 +167,8 @@ function getFileTypeClass(fileName) {
     return "tree-file-data";
   }
 
-  if (["md", "txt", "rst", "adoc", "rtf"].includes(ext)) {
-    if (ext === "md") {
+  if (["md", "markdown", "mdown", "mkdn", "txt", "rst", "adoc", "rtf"].includes(ext)) {
+    if (["md", "markdown", "mdown", "mkdn"].includes(ext)) {
       return "tree-file-markdown";
     }
     return "tree-file-doc";

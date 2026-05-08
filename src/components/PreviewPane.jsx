@@ -16,6 +16,7 @@ const RECENT_FILES_KEY = "nightops:recent-files";
 const MAX_RECENT_FILES = 10;
 const MAX_PDF_DIMENSION = 1200;
 const IMAGE_FILE_EXTENSIONS = new Set(["png", "jpg", "jpeg", "gif", "webp", "bmp", "svg", "ico", "heic", "heif"]);
+const MARKDOWN_FILE_EXTENSIONS = new Set(["md", "markdown", "mdown", "mkdn"]);
 
 hljs.registerLanguage("javascript", javascript);
 hljs.registerLanguage("json", json);
@@ -70,7 +71,8 @@ function detectLanguage(fileName) {
 }
 
 function isMarkdownFileName(fileName) {
-  return fileName.toLowerCase().endsWith(".md");
+  const ext = fileName.split(".").pop()?.toLowerCase() || "";
+  return MARKDOWN_FILE_EXTENSIONS.has(ext);
 }
 
 function escapeHtml(code) {
@@ -82,16 +84,55 @@ function escapeHtml(code) {
     .replaceAll("'", "&#39;");
 }
 
+async function copyTextToClipboard(text) {
+  const value = String(text ?? "");
+
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(value);
+      return true;
+    }
+  } catch {
+    // Fall through to the legacy copy path.
+  }
+
+  try {
+    const textarea = document.createElement("textarea");
+    textarea.value = value;
+    textarea.readOnly = true;
+    textarea.style.position = "fixed";
+    textarea.style.opacity = "0";
+    textarea.style.pointerEvents = "none";
+    document.body.appendChild(textarea);
+    textarea.select();
+    const copied = document.execCommand("copy");
+    document.body.removeChild(textarea);
+    return copied;
+  } catch {
+    return false;
+  }
+}
+
 function isImageFileName(fileName) {
   const ext = fileName.split(".").pop()?.toLowerCase() || "";
   return IMAGE_FILE_EXTENSIONS.has(ext);
 }
 
 function renderMarkdownInline(text) {
-  return escapeHtml(text)
-    .replace(/`([^`]+)`/g, "<code>$1</code>")
-    .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
-    .replace(/\*([^*]+)\*/g, "<em>$1</em>");
+  const segments = String(text ?? "").split(/(`[^`]*`)/g);
+
+  return segments
+    .map((segment) => {
+      if (/^`[^`]*`$/.test(segment)) {
+        return `<code class="markdown-inline-code">${escapeHtml(segment.slice(1, -1))}</code>`;
+      }
+
+      return escapeHtml(segment)
+        .replace(/\*\*\*\*([\s\S]+?)\*\*\*\*/g, '<span class="markdown-inline-red">$1</span>')
+        .replace(/\*\*([\s\S]+?)\*\*/g, '<span class="markdown-inline-blue">$1</span>')
+        .replace(/\*([^*]+)\*/g, "<em>$1</em>");
+    })
+    .join("");
 }
 
 function parseMarkdownDocument(markdown) {
@@ -140,6 +181,7 @@ function parseMarkdownDocument(markdown) {
     blocks.push({
       kind: "code",
       language: codeLanguage,
+      raw: code,
       html: highlightedCode
     });
     codeLines = [];
@@ -327,6 +369,7 @@ function Pane({
   onSelectFile,
   onSaved,
   markdownHeadingColors,
+  markdownHeadingSizes,
   onUpdatePane,
   onSplitRight,
   onPaneFocus,
@@ -1285,12 +1328,27 @@ function Pane({
 
       if (block.kind === "code") {
         rendered.push(
-          <pre key={`code-${rendered.length}`} className="markdown-code-block">
-            <code
-              className={block.language ? `language-${block.language}` : ""}
-              dangerouslySetInnerHTML={{ __html: block.html }}
-            />
-          </pre>
+          <div key={`code-${rendered.length}`} className="markdown-code-shell">
+            <button
+              type="button"
+              className="markdown-code-copy-button"
+              aria-label="Copy code block"
+              title="Copy code block"
+              onClick={async (event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                await copyTextToClipboard(block.raw || "");
+              }}
+            >
+              ⧉
+            </button>
+            <pre className="markdown-code-block">
+              <code
+                className={block.language ? `language-${block.language}` : ""}
+                dangerouslySetInnerHTML={{ __html: block.html }}
+              />
+            </pre>
+          </div>
         );
         continue;
       }
@@ -1339,7 +1397,13 @@ function Pane({
         "--markdown-heading-color-3": markdownHeadingColors?.[2] || "#f5c542",
         "--markdown-heading-color-4": markdownHeadingColors?.[3] || "#c18cff",
         "--markdown-heading-color-5": markdownHeadingColors?.[4] || "#e88787",
-        "--markdown-heading-color-6": markdownHeadingColors?.[5] || "#9dd6c4"
+        "--markdown-heading-color-6": markdownHeadingColors?.[5] || "#9dd6c4",
+        "--markdown-heading-size-1": String(markdownHeadingSizes?.[0] || 1.65),
+        "--markdown-heading-size-2": String(markdownHeadingSizes?.[1] || 1.4),
+        "--markdown-heading-size-3": String(markdownHeadingSizes?.[2] || 1.22),
+        "--markdown-heading-size-4": String(markdownHeadingSizes?.[3] || 1.08),
+        "--markdown-heading-size-5": String(markdownHeadingSizes?.[4] || 0.98),
+        "--markdown-heading-size-6": String(markdownHeadingSizes?.[5] || 0.98)
       }}
     >
       {edgeDropPosition ? (
@@ -1705,7 +1769,13 @@ function Pane({
   );
 }
 
-const PaneContainer = forwardRef(function PaneContainer({ selectedFile, onSelectFile, onSaved, markdownHeadingColors }, ref) {
+const PaneContainer = forwardRef(function PaneContainer({
+  selectedFile,
+  onSelectFile,
+  onSaved,
+  markdownHeadingColors,
+  markdownHeadingSizes
+}, ref) {
   const [panes, setPanes] = useState(() => [{ id: "pane-1", tabs: [], activeTabPath: "" }]);
   const [activePaneId, setActivePaneId] = useState("pane-1");
   const [splitRatio, setSplitRatio] = useState(0.5);
@@ -2169,6 +2239,7 @@ const PaneContainer = forwardRef(function PaneContainer({ selectedFile, onSelect
               onSelectFile={onSelectFile}
               onSaved={onSaved}
               markdownHeadingColors={markdownHeadingColors}
+              markdownHeadingSizes={markdownHeadingSizes}
               onUpdatePane={(updater) => handlePaneUpdate(pane.id, updater)}
               onSplitRight={(paneId, tabPath) => splitPane(paneId, "right", tabPath)}
               onPaneFocus={() => setActivePaneId(pane.id)}
