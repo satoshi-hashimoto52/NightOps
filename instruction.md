@@ -1,453 +1,255 @@
-以下は、御自身のNightOps系Markdown Previewシステムへ
-「1〜15の機能追加」を安全に段階実装させるための、
-Codex向け実装指示です。
-
-特に、
-
-* 独自Markdownパーサ崩壊防止
-* UI劣化防止
-* 長文性能維持
-* 将来的なAST移行余地維持
-
-を重視しています。
-
----
-
-# Codex指示全文
-
-# Markdown Preview System Enhancement Instructions
+# Copy Button Icon Modernization Instructions
 
 ## Goal
 
-Extend the existing custom Markdown Preview system incrementally without breaking:
+Replace emoji-based copy UI icons with compact IDE-style icon components.
 
-* current rendering behavior
-* heading folding system
-* live preview
-* syntax highlighting
-* copy buttons
-* editor split layout
+Current state:
 
-The application is evolving from a generic markdown viewer into an AI-oriented documentation IDE.
+* CopyButton component already unified
+* copy interactions centralized
+* 📋 / ✓ currently used
+* copied state behavior already shared
 
-Preserve existing UX and architecture as much as possible.
-
----
-
-# IMPORTANT RULES
-
-## DO NOT
-
-* replace the entire markdown renderer
-* migrate immediately to react-markdown
-* migrate immediately to remark/markdown-it
-* remove custom folding behavior
-* rewrite PreviewPane from scratch
-* change existing CSS variable naming conventions
-* break current markdown rendering
-
-This project currently depends on a custom block parser.
-All enhancements must be additive and incremental.
+Next goal:
+improve visual consistency and cross-platform rendering quality.
 
 ---
 
-# PRIORITY ORDER
+# IMPORTANT
 
-Implement features in the following order.
+Do NOT redesign the copy interaction system.
 
-Each phase must remain stable before the next.
+Maintain:
+
+* existing CopyButton behavior
+* copied-state timing
+* accessibility behavior
+* keyboard support
+* outline integration
+* heading integration
+
+Only modernize the icon rendering.
 
 ---
 
-# PHASE 1 (Highest Priority)
+# Requirements
 
-## 1. Nested List Support
+## 1. Replace Emoji Icons
 
-Support:
+Replace:
 
-* nested unordered lists
-* nested ordered lists
-* mixed nesting
+| Current | Replace With |
+| ------- | ------------ |
+| 📋      | copy icon    |
+| ✓       | check icon   |
 
-Examples:
+Recommended library:
 
-```md
-- A
-  - B
-    - C
-
-1. One
-   1. Child
+```text id="djlwm1"
+lucide-react
 ```
 
-Requirements:
+Recommended icons:
 
-* preserve indentation
-* preserve folding compatibility
-* preserve live preview performance
+* Copy
+* Check
+
+Alternative lightweight icon systems are acceptable if visually compact.
 
 ---
 
-## 2. Callout Support (Obsidian Compatible)
+# 2. Maintain Compact IDE Appearance
 
-Support syntax:
+Requirements:
 
-```md
-> [!tip]
-> text
+* compact sizing
+* low visual noise
+* thin stroke appearance
+* aligned baseline rendering
+
+Recommended size:
+
+```text id="qjlwm2"
+14px - 16px
 ```
 
-```md
-> [!warning]
-> text
+Recommended style:
+
+```css id="zjlwm3"
+opacity: 0.45;
 ```
 
-Supported types:
+Increase visibility on:
 
-* note
-* tip
-* warning
-* danger
-* info
+* hover
+* focus
+* active
 
-Requirements:
-
-* dedicated styling
-* colored border/background
-* collapsible support optional
-* preserve plain quote compatibility
-
-Strongly prioritize Obsidian compatibility.
+Avoid oversized icons.
 
 ---
 
-## 3. Checkbox / Task List Support
+# 3. Preserve Existing UX
 
-Support:
+Maintain:
 
-```md
-- [ ] TODO
-- [x] DONE
+* copied-state transition
+* copied timeout behavior
+* keyboard accessibility
+* aria-label behavior
+* touch compatibility
+
+Do NOT change interaction flow.
+
+---
+
+# 4. Accessibility
+
+CopyButton must remain:
+
+* focusable
+* keyboard operable
+* screen-reader compatible
+
+Preserve:
+
+```jsx id="mjlwm4"
+aria-label
 ```
 
-Requirements:
-
-* visual checkbox rendering
-* completed style
-* optional interactive toggle
-* no backend persistence required initially
+behavior.
 
 ---
 
-## 4. Quote Block Rendering
+# 5. Avoid Heavy Animation
 
-Support standard markdown quote rendering:
+Do NOT add:
 
-```md
-> quoted text
+* bounce effects
+* scale animations
+* toast notifications
+* large transitions
+
+Recommended:
+
+* subtle opacity transition
+* lightweight color shift
+* minimal motion
+
+This is an IDE-oriented interface.
+
+---
+
+# 6. Shared Component Integrity
+
+All copy UI locations must continue using:
+
+```text id="vjlwm5"
+CopyButton.jsx
 ```
 
-Requirements:
-
-* left border
-* padding
-* muted text style
+Avoid reintroducing duplicated copy icon logic.
 
 ---
 
-## 5. Horizontal Rule Support
+# 7. Touch Device Compatibility
 
-Support:
+Icons must remain visible and usable on:
 
-```md
----
-```
+* touch devices
+* narrow layouts
+* split preview mode
 
-and
-
-```md
-***
-```
-
-Requirements:
-
-* lightweight rendering
-* section separation styling
+Avoid hover-only visibility.
 
 ---
 
-# PHASE 2
+# 8. Styling Requirements
 
-## 6. Link Support
+Maintain NightOps visual language:
 
-Support:
-
-```md
-[title](url)
-```
-
-Requirements:
-
-* open external links safely
-* target=_blank
-* rel=noopener noreferrer
-
-Additionally support internal wiki-style links:
-
-```md
-[[SPEC]]
-```
-
-Initial implementation may simply emit clickable spans.
-
----
-
-## 7. Image Support
-
-Support:
-
-```md
-![alt](path)
-```
-
-Requirements:
-
-* responsive scaling
-* max-width protection
-* dark mode compatibility
-* lazy loading preferred
-
-Do NOT implement heavy image processing initially.
-
----
-
-## 8. Mermaid Support
-
-Support fenced mermaid blocks:
-
-````md
-```mermaid
-graph TD
-A --> B
-```
-````
-
-Requirements:
-
-* lazy rendering
-* avoid blocking editor performance
-* fallback UI if parse fails
-
----
-
-## 9. Outline / TOC Pane
-
-Add a heading outline panel.
-
-Requirements:
-
-* sync with heading hierarchy
-* clickable navigation
-* auto-scroll to heading
-* preserve existing folding behavior
-
-Avoid expensive DOM traversal.
-
----
-
-# PHASE 3
-
-## 10. Enhanced Code Blocks
-
-Add:
-
-* optional filename labels
-* optional line numbers
-* diff highlighting
-
-Examples:
-
-````md
-```python:title=app.py
-```
-````
-
-````md
-```diff
-+ added
-- removed
-```
-````
-
-Requirements:
-
-* preserve existing copy button
-* preserve highlight.js integration
-
----
-
-## 11. Persistent Fold State
-
-Persist fold state using localStorage.
-
-Requirements:
-
-* restore fold state per file
-* avoid excessive localStorage writes
-* debounce updates
-
----
-
-## 12. Section Copy
-
-Add "Copy Section" capability per heading section.
-
-Requirements:
-
-* copy heading + body
-* preserve markdown formatting
-* avoid DOM-based copy extraction when possible
-
----
-
-## 13. AI-Oriented Custom Blocks
-
-Support custom syntax blocks:
-
-```md
-:::prompt
-text
-```
-
-````
-
-```md
-=== src/main.py ===
-````
-
-Requirements:
-
-* visually distinct rendering
-* optimized for AI workflow readability
-
----
-
-# PHASE 4
-
-## 14. Virtualized Rendering
-
-For extremely large markdown documents.
-
-Requirements:
-
-* preserve folding behavior
-* preserve scroll position
-* avoid breaking syntax highlight
-
-Do NOT implement until previous phases stabilize.
-
----
-
-## 15. Parser Architecture Refactor Preparation
-
-Current parser is regex/block based.
-
-Prepare architecture for future AST migration.
-
-Requirements:
-
-* isolate parser utilities
-* separate:
-
-  * tokenize
-  * parse
-  * render
-* reduce PreviewPane.jsx complexity
-* DO NOT fully migrate yet
-
-Goal:
-future compatibility with remark/markdown-it while preserving custom IDE behaviors.
-
----
-
-# PERFORMANCE REQUIREMENTS
-
-Markdown rendering must remain responsive for:
-
-* large AI-generated documents
-* long code blocks
-* multi-thousand-line specs
+* dense
+* technical
+* compact
+* IDE-oriented
 
 Avoid:
 
-* repeated full-document regex scans
-* unnecessary React rerenders
-* synchronous expensive parsing
-
-Memoize aggressively where appropriate.
-
----
-
-# UI REQUIREMENTS
-
-This project is an AI-oriented documentation IDE.
-
-Optimize for:
-
-* long-form technical specs
-* AI prompt workflows
-* multi-file outputs
-* AGENTS.md workflows
-* TODO management
-* code review readability
-
-Not for generic blog-style markdown rendering.
+* glossy buttons
+* floating action UI
+* oversized hit areas
+* decorative effects
 
 ---
 
-# STYLING REQUIREMENTS
+# 9. Future-Proofing
 
-Maintain existing visual language.
+Prepare CopyButton for future extensibility:
 
-Do NOT introduce:
+Potential future additions:
 
-* excessive gradients
-* heavy shadows
-* oversized padding
-* animated UI everywhere
+* tooltip
+* copy format selection
+* keyboard shortcut hints
+* long press behavior
 
-Prefer:
+Do NOT implement these yet.
 
-* dense information layout
-* IDE-like appearance
-* readable spacing
-* collapsible structures
+Only keep architecture extensible.
 
 ---
 
-# IMPLEMENTATION STRATEGY
+# 10. Validation
 
-For each feature:
+Verify:
 
-1. inspect current parser behavior
-2. minimally extend parser
-3. preserve backward compatibility
-4. validate live preview
-5. validate folding behavior
-6. validate performance
+* heading copy still works
+* outline copy still works
+* copied state still resets
+* icon alignment consistency
+* touch usability
+* keyboard accessibility
+* no layout jitter
+* build success
 
-Avoid large-scale rewrites.
+```bash id="pjlwm6"
+npm run build
+```
 
 ---
 
-# OUTPUT FORMAT
+# Recommended Incremental Refactor
 
-For each phase:
+If markdown-related shared components are increasing:
 
-* explain implementation strategy first
-* then modify code
-* show changed files only
-* avoid rewriting entire files unless necessary
+begin organizing toward:
 
-Always prioritize stability over feature count.
+```text id="rjlwm7"
+src/components/markdown/
+```
 
+Suggested future structure:
+
+```text id="kjlwm8"
+markdown/
+ ├─ CopyButton.jsx
+ ├─ renderers/
+ ├─ hooks/
+ └─ utils/
+```
+
+Do NOT perform a large-scale migration yet.
+
+Only move shared logic incrementally.
+
+---
+
+# Output Rules
+
+* modify changed sections only
+* avoid unrelated refactors
+* preserve markdown parser behavior
+* preserve copy interaction behavior
+* preserve outline behavior
+* preserve current accessibility behavior

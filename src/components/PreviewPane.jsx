@@ -9,6 +9,7 @@ import css from "highlight.js/lib/languages/css";
 import "highlight.js/styles/github-dark.css";
 import * as pdfjsLib from "pdfjs-dist";
 import pdfWorkerSrc from "pdfjs-dist/build/pdf.worker?url";
+import CopyButton from "./markdown/CopyButton";
 import { listDirectory, onFileChanged, readFile, saveFile, unwatchFile, watchFile } from "../utils/fileLoader";
 
 const MAX_CSV_ROWS = 1000;
@@ -47,6 +48,130 @@ function splitMarkdownTableRow(line) {
 function isMarkdownTableSeparatorRow(line) {
   const cells = splitMarkdownTableRow(line);
   return cells.length > 1 && cells.every((cell) => /^:?-{3,}:?$/.test(cell));
+}
+
+function isMarkdownHorizontalRule(line) {
+  return /^\s*(?:---|\*\*\*|___)\s*$/.test(String(line ?? ""));
+}
+
+function resolveMarkdownResourceUrl(rawUrl, basePath = "") {
+  const value = String(rawUrl ?? "").trim();
+  if (!value) {
+    return "";
+  }
+
+  if (/^(?:https?:|mailto:|tel:|data:|blob:|file:|#)/i.test(value)) {
+    return value;
+  }
+
+  if (!basePath) {
+    return value;
+  }
+
+  const segments = basePath.split("/").filter(Boolean);
+  if (segments.length > 0) {
+    segments.pop();
+  }
+
+  for (const part of value.split("/")) {
+    if (!part || part === ".") {
+      continue;
+    }
+    if (part === "..") {
+      segments.pop();
+      continue;
+    }
+    segments.push(part);
+  }
+
+  return `file:///${segments.join("/")}`.replace(/\/{3,}/g, "///");
+}
+
+function getLineIndent(line) {
+  const indentMatch = String(line ?? "").match(/^[ \t]*/);
+  const indentText = indentMatch ? indentMatch[0] : "";
+  return indentText.replace(/\t/g, "    ").length;
+}
+
+function parseMarkdownListItem(line) {
+  const match = String(line ?? "").match(/^([ \t]*)([-*+]|\d+\.)\s+(.*)$/);
+  if (!match) {
+    return null;
+  }
+
+  const marker = match[2];
+  const type = /\d+\./.test(marker) ? "ordered" : "unordered";
+  const indent = getLineIndent(match[1]);
+  const rawText = match[3];
+  const taskMatch = rawText.match(/^\[( |x|X)\]\s+(.*)$/);
+
+  return {
+    indent,
+    type,
+    task: Boolean(taskMatch),
+    checked: taskMatch ? taskMatch[1].toLowerCase() === "x" : false,
+    text: taskMatch ? taskMatch[2] : rawText
+  };
+}
+
+function parseMarkdownListBlock(lines, basePath = "") {
+  const root = { indent: -1, nodes: [], lastNode: null };
+  const stack = [root];
+
+  for (const line of lines) {
+    const item = parseMarkdownListItem(line);
+    if (!item) {
+      continue;
+    }
+
+    while (stack.length > 1 && item.indent < stack[stack.length - 1].indent) {
+      stack.pop();
+    }
+
+    const currentLevel = stack[stack.length - 1];
+    if (item.indent > currentLevel.indent && currentLevel.lastNode) {
+      stack.push({
+        indent: item.indent,
+        nodes: currentLevel.lastNode.children,
+        lastNode: null
+      });
+    }
+
+    const activeLevel = stack[stack.length - 1];
+    const node = {
+      type: item.type,
+      task: item.task,
+      checked: item.checked,
+      textHtml: renderMarkdownInline(item.text, basePath),
+      children: []
+    };
+    activeLevel.nodes.push(node);
+    activeLevel.lastNode = node;
+  }
+
+  return root.nodes;
+}
+
+function parseMarkdownQuoteBlock(lines, basePath = "") {
+  const strippedLines = lines.map((line) => String(line ?? "").replace(/^\s*>\s?/, ""));
+  const firstLine = strippedLines[0] || "";
+  const calloutMatch = firstLine.match(/^\[!(note|tip|warning|danger|info)\]\s*(.*)$/i);
+
+  if (calloutMatch) {
+    const calloutType = calloutMatch[1].toLowerCase();
+    const bodyLines = calloutMatch[2] ? [calloutMatch[2], ...strippedLines.slice(1)] : strippedLines.slice(1);
+    return {
+      kind: "callout",
+      calloutType,
+      title: calloutType.toUpperCase(),
+      html: bodyLines.map((line) => renderMarkdownInline(line, basePath)).join("<br>")
+    };
+  }
+
+  return {
+    kind: "quote",
+    html: strippedLines.map((line) => renderMarkdownInline(line, basePath)).join("<br>")
+  };
 }
 
 function detectLanguage(fileName) {
@@ -118,7 +243,7 @@ function isImageFileName(fileName) {
   return IMAGE_FILE_EXTENSIONS.has(ext);
 }
 
-function renderMarkdownInline(text) {
+function renderMarkdownInline(text, basePath = "") {
   const segments = String(text ?? "").split(/(`[^`]*`)/g);
 
   return segments
@@ -127,7 +252,21 @@ function renderMarkdownInline(text) {
         return `<code class="markdown-inline-code">${escapeHtml(segment.slice(1, -1))}</code>`;
       }
 
-      return escapeHtml(segment)
+      const escaped = escapeHtml(segment);
+      const withImages = escaped.replace(/!\[([^\]]*)\]\(([^)]+)\)/g, (_match, alt, rawUrl) => {
+        const resolvedUrl = resolveMarkdownResourceUrl(rawUrl, basePath);
+        return `<img class="markdown-inline-image" alt="${escapeHtml(alt)}" src="${escapeHtml(resolvedUrl)}" loading="lazy" />`;
+      });
+      const withLinks = withImages.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_match, label, rawUrl) => {
+        const resolvedUrl = resolveMarkdownResourceUrl(rawUrl, basePath);
+        const isExternal = /^(?:https?:|mailto:|tel:|data:|blob:|file:|#)/i.test(resolvedUrl);
+        const attrs = isExternal
+          ? ' target="_blank" rel="noopener noreferrer"'
+          : "";
+        return `<a class="markdown-inline-link" href="${escapeHtml(resolvedUrl)}"${attrs}>${label}</a>`;
+      });
+      return withLinks
+        .replace(/\[\[([^\]]+)\]\]/g, '<span class="markdown-wiki-link">[[$1]]</span>')
         .replace(/\*\*\*\*([\s\S]+?)\*\*\*\*/g, '<span class="markdown-inline-red">$1</span>')
         .replace(/\*\*([\s\S]+?)\*\*/g, '<span class="markdown-inline-blue">$1</span>')
         .replace(/\*([^*]+)\*/g, "<em>$1</em>");
@@ -135,12 +274,14 @@ function renderMarkdownInline(text) {
     .join("");
 }
 
-function parseMarkdownDocument(markdown) {
+function parseMarkdownDocument(markdown, basePath = "") {
   const lines = String(markdown ?? "").replace(/\r\n?/g, "\n").split("\n");
   const blocks = [];
   const headings = [];
+  const headingStack = [];
   let paragraphLines = [];
   let listItems = [];
+  let quoteLines = [];
   let codeLines = [];
   let inCodeBlock = false;
   let codeLanguage = "";
@@ -152,7 +293,7 @@ function parseMarkdownDocument(markdown) {
 
     blocks.push({
       kind: "paragraph",
-      html: paragraphLines.map((line) => renderMarkdownInline(line)).join("<br>")
+      html: paragraphLines.map((line) => renderMarkdownInline(line, basePath)).join("<br>")
     });
     paragraphLines = [];
   }
@@ -164,9 +305,24 @@ function parseMarkdownDocument(markdown) {
 
     blocks.push({
       kind: "list",
-      items: [...listItems]
+      items: parseMarkdownListBlock(listItems, basePath)
     });
     listItems = [];
+  }
+
+  function flushQuote() {
+    if (quoteLines.length === 0) {
+      return;
+    }
+
+    blocks.push(parseMarkdownQuoteBlock(quoteLines, basePath));
+    quoteLines = [];
+  }
+
+  function flushHorizontalRule() {
+    blocks.push({
+      kind: "hr"
+    });
   }
 
   function flushCodeBlock() {
@@ -178,12 +334,20 @@ function parseMarkdownDocument(markdown) {
     const highlightedCode = codeLanguage && hljs.getLanguage(codeLanguage)
       ? hljs.highlight(code, { language: codeLanguage, ignoreIllegals: true }).value
       : escapeHtml(code);
-    blocks.push({
-      kind: "code",
-      language: codeLanguage,
-      raw: code,
-      html: highlightedCode
-    });
+    blocks.push(
+      codeLanguage === "mermaid"
+        ? {
+            kind: "mermaid",
+            raw: code,
+            html: highlightedCode
+          }
+        : {
+            kind: "code",
+            language: codeLanguage,
+            raw: code,
+            html: highlightedCode
+          }
+    );
     codeLines = [];
     codeLanguage = "";
     inCodeBlock = false;
@@ -204,6 +368,7 @@ function parseMarkdownDocument(markdown) {
     if (fenceMatch) {
       flushParagraph();
       flushList();
+      flushQuote();
       inCodeBlock = true;
       codeLanguage = fenceMatch[1] || "";
       codeLines = [];
@@ -214,18 +379,26 @@ function parseMarkdownDocument(markdown) {
     if (headingMatch) {
       flushParagraph();
       flushList();
+      flushQuote();
       const level = headingMatch[1].length;
       const id = `heading-${headings.length}`;
-      const html = renderMarkdownInline(headingMatch[2]);
+      while (headingStack.length > 0 && headingStack[headingStack.length - 1].level >= level) {
+        headingStack.pop();
+      }
+      const parentId = headingStack.length > 0 ? headingStack[headingStack.length - 1].id : "";
+      const html = renderMarkdownInline(headingMatch[2], basePath);
       const heading = {
         kind: "heading",
         id,
+        parentId,
         level,
+        startLine: index,
         html,
         text: headingMatch[2]
       };
       headings.push(heading);
       blocks.push(heading);
+      headingStack.push(heading);
       continue;
     }
 
@@ -233,8 +406,9 @@ function parseMarkdownDocument(markdown) {
     if (line.includes("|") && isMarkdownTableSeparatorRow(nextLine)) {
       flushParagraph();
       flushList();
+      flushQuote();
 
-      const headers = splitMarkdownTableRow(line).map((cell) => renderMarkdownInline(cell));
+      const headers = splitMarkdownTableRow(line).map((cell) => renderMarkdownInline(cell, basePath));
       const rows = [];
       index += 1;
 
@@ -247,7 +421,7 @@ function parseMarkdownDocument(markdown) {
           break;
         }
 
-        const rowCells = splitMarkdownTableRow(rowLine).map((cell) => renderMarkdownInline(cell));
+        const rowCells = splitMarkdownTableRow(rowLine).map((cell) => renderMarkdownInline(cell, basePath));
         const normalizedRow = headers.map((_, cellIndex) => rowCells[cellIndex] || "");
         rows.push(normalizedRow);
         index += 1;
@@ -261,19 +435,37 @@ function parseMarkdownDocument(markdown) {
       continue;
     }
 
-    const listMatch = line.match(/^[-*+]\s+(.*)$/);
-    if (listMatch) {
+    if (isMarkdownHorizontalRule(line)) {
       flushParagraph();
-      listItems.push(`<li>${renderMarkdownInline(listMatch[1])}</li>`);
+      flushList();
+      flushQuote();
+      flushHorizontalRule();
+      continue;
+    }
+
+    if (/^\s*>/.test(line)) {
+      flushParagraph();
+      flushList();
+      quoteLines.push(line);
+      continue;
+    }
+
+    const indentedListMatch = parseMarkdownListItem(line);
+    if (indentedListMatch) {
+      flushParagraph();
+      flushQuote();
+      listItems.push(line);
       continue;
     }
 
     if (!line.trim()) {
       flushParagraph();
       flushList();
+      flushQuote();
       continue;
     }
 
+    flushQuote();
     if (listItems.length > 0) {
       flushList();
     }
@@ -282,6 +474,7 @@ function parseMarkdownDocument(markdown) {
 
   flushParagraph();
   flushList();
+  flushQuote();
   flushCodeBlock();
 
   return { blocks, headings };
@@ -407,6 +600,7 @@ function Pane({
   const [pdfViewport, setPdfViewport] = useState({ width: 0, height: 0 });
   const [imageNavFiles, setImageNavFiles] = useState([]);
   const [collapsedMarkdownHeadings, setCollapsedMarkdownHeadings] = useState(() => new Set());
+  const [activeHeadingId, setActiveHeadingId] = useState("");
   const [editorSelection, setEditorSelection] = useState(null);
   const previewShellRef = useRef(null);
   const pdfWrapRef = useRef(null);
@@ -421,8 +615,8 @@ function Pane({
   const [tabContextMenu, setTabContextMenu] = useState(null);
   const isMarkdown = Boolean(fileData && isMarkdownFileName(fileData.name));
   const markdownDocument = useMemo(
-    () => (isMarkdown ? parseMarkdownDocument(editValue) : { blocks: [], headings: [] }),
-    [editValue, isMarkdown]
+    () => (isMarkdown ? parseMarkdownDocument(editValue, fileData?.path || "") : { blocks: [], headings: [] }),
+    [editValue, fileData?.path, isMarkdown]
   );
 
   const editorLineCount = useMemo(
@@ -434,6 +628,96 @@ function Pane({
     () => Array.from({ length: editorLineCount }, (_, index) => index + 1),
     [editorLineCount]
   );
+
+  const markdownOutlineHighlightIds = useMemo(() => {
+    if (!activeHeadingId) {
+      return new Set();
+    }
+
+    const activeIndex = markdownDocument.headings.findIndex((heading) => heading.id === activeHeadingId);
+    if (activeIndex === -1) {
+      return new Set();
+    }
+
+    const highlighted = new Set([activeHeadingId]);
+    const ancestorStack = [];
+
+    for (let index = 0; index <= activeIndex; index += 1) {
+      const heading = markdownDocument.headings[index];
+      while (ancestorStack.length > 0 && ancestorStack[ancestorStack.length - 1].level >= heading.level) {
+        ancestorStack.pop();
+      }
+      ancestorStack.push(heading);
+    }
+
+    for (const heading of ancestorStack) {
+      highlighted.add(heading.id);
+    }
+
+    return highlighted;
+  }, [activeHeadingId, markdownDocument.headings]);
+
+  useEffect(() => {
+    if (!isMarkdown) {
+      setActiveHeadingId("");
+      return undefined;
+    }
+
+    const container = previewScrollRef.current;
+    if (!container || markdownDocument.headings.length === 0) {
+      setActiveHeadingId("");
+      return undefined;
+    }
+
+    const headingElements = markdownDocument.headings
+      .map((heading) => container.querySelector(`#${heading.id}`))
+      .filter(Boolean);
+
+    if (headingElements.length === 0) {
+      setActiveHeadingId("");
+      return undefined;
+    }
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const visibleEntries = entries.filter((entry) => entry.isIntersecting);
+        if (visibleEntries.length === 0) {
+          return;
+        }
+
+        const rootBounds = visibleEntries[0].rootBounds;
+        const rootCenter = rootBounds ? rootBounds.top + rootBounds.height / 2 : 0;
+        let bestEntry = visibleEntries[0];
+        let bestDistance = Math.abs(bestEntry.boundingClientRect.top - rootCenter);
+
+        for (const entry of visibleEntries.slice(1)) {
+          const distance = Math.abs(entry.boundingClientRect.top - rootCenter);
+          if (distance < bestDistance) {
+            bestEntry = entry;
+            bestDistance = distance;
+          }
+        }
+
+        const nextId = bestEntry.target.id || "";
+        if (nextId) {
+          setActiveHeadingId((current) => (current === nextId ? current : nextId));
+        }
+      },
+      {
+        root: container,
+        rootMargin: "-30% 0px -60% 0px",
+        threshold: [0, 0.25, 0.5, 0.75, 1]
+      }
+    );
+
+    headingElements.forEach((element) => observer.observe(element));
+
+    if (!activeHeadingId && markdownDocument.headings[0]) {
+      setActiveHeadingId(markdownDocument.headings[0].id);
+    }
+
+    return () => observer.disconnect();
+  }, [activeHeadingId, isMarkdown, markdownDocument.headings]);
 
   function setOpenTabs(updater) {
     if (!onUpdatePane) {
@@ -527,6 +811,7 @@ function Pane({
     setPdfViewport(nextState.pdfViewport || { width: 0, height: 0 });
     setImageNavFiles(Array.isArray(nextState.imageNavFiles) ? nextState.imageNavFiles : []);
     setCollapsedMarkdownHeadings(new Set(nextState.collapsedMarkdownHeadings || []));
+    setActiveHeadingId(nextState.activeHeadingId || "");
     setEditorSelection(nextState.editorSelection || null);
   }
 
@@ -1264,6 +1549,146 @@ function Pane({
     });
   }
 
+  function scrollToMarkdownHeading(headingId) {
+    const container = previewScrollRef.current;
+    if (!container) {
+      return;
+    }
+
+    const target = container.querySelector(`[id="${headingId}"]`);
+    if (!target) {
+      return;
+    }
+
+    target.scrollIntoView({ block: "start", behavior: "smooth" });
+  }
+
+  function getMarkdownSectionSource(headingId) {
+    const headingIndex = markdownDocument.headings.findIndex((heading) => heading.id === headingId);
+    if (headingIndex === -1) {
+      return "";
+    }
+
+    const lines = String(editValue ?? "").replace(/\r\n?/g, "\n").split("\n");
+    const heading = markdownDocument.headings[headingIndex];
+    let endLine = lines.length;
+
+    for (let index = headingIndex + 1; index < markdownDocument.headings.length; index += 1) {
+      const nextHeading = markdownDocument.headings[index];
+      if (nextHeading.level <= heading.level) {
+        endLine = nextHeading.startLine ?? lines.length;
+        break;
+      }
+    }
+
+    const startLine = Math.max(0, heading.startLine ?? 0);
+    return lines.slice(startLine, endLine).join("\n").trimEnd();
+  }
+
+  async function handleCopyMarkdownSection(headingId) {
+    const sectionSource = getMarkdownSectionSource(headingId);
+    if (!sectionSource) {
+      return false;
+    }
+
+    const copied = await copyTextToClipboard(sectionSource);
+    if (!copied) {
+      return false;
+    }
+
+    return true;
+  }
+
+  function renderMarkdownOutlineItem(heading) {
+    const isActive = activeHeadingId === heading.id;
+    const isAncestor = activeHeadingId !== heading.id && markdownOutlineHighlightIds.has(heading.id);
+
+    return (
+      <div
+        key={heading.id}
+        className={`markdown-outline-item markdown-outline-level-${heading.level}${isActive ? " markdown-outline-item-active" : ""}${isAncestor ? " markdown-outline-item-ancestor" : ""}`}
+      >
+        <button
+          type="button"
+          className="markdown-outline-item-label"
+          onClick={() => scrollToMarkdownHeading(heading.id)}
+          title={heading.text}
+        >
+          <span className="markdown-outline-item-text">{heading.text}</span>
+        </button>
+        <CopyButton
+          className="markdown-outline-copy"
+          onCopy={() => handleCopyMarkdownSection(heading.id)}
+          copyLabel={`Copy section for ${heading.text}`}
+          copiedLabel={`Section copied for ${heading.text}`}
+        title="Copy section"
+      />
+    </div>
+  );
+  }
+
+  function renderMarkdownListNodes(nodes, keyPrefix = "list") {
+    if (!nodes.length) {
+      return null;
+    }
+
+    const renderedGroups = [];
+    let currentGroupType = nodes[0].type;
+    let currentGroup = [];
+
+    function flushGroup(groupIndex) {
+      if (currentGroup.length === 0) {
+        return;
+      }
+
+      const ListTag = currentGroupType === "ordered" ? "ol" : "ul";
+      renderedGroups.push(
+        <ListTag key={`${keyPrefix}-group-${groupIndex}`} className={`markdown-list markdown-list-${currentGroupType}`}>
+          {currentGroup.map((node, index) => (
+            <li
+              key={`${keyPrefix}-${groupIndex}-${index}`}
+              className={`markdown-list-item${node.task ? " markdown-task-item" : ""}${node.checked ? " markdown-task-item-complete" : ""}`}
+            >
+              <div className="markdown-list-item-content">
+                {node.task ? (
+                  <span className="markdown-task-checkbox" aria-hidden="true">
+                    {node.checked ? "☑" : "☐"}
+                  </span>
+                ) : null}
+                <span
+                  className="markdown-list-item-text"
+                  dangerouslySetInnerHTML={{ __html: node.textHtml }}
+                />
+              </div>
+              {node.children.length > 0 ? (
+                <div className="markdown-list-children">
+                  {renderMarkdownListNodes(node.children, `${keyPrefix}-${groupIndex}-${index}`)}
+                </div>
+              ) : null}
+            </li>
+          ))}
+        </ListTag>
+      );
+      currentGroup = [];
+    }
+
+    nodes.forEach((node, index) => {
+      if (index === 0) {
+        currentGroupType = node.type;
+      }
+
+      if (node.type !== currentGroupType) {
+        flushGroup(renderedGroups.length);
+        currentGroupType = node.type;
+      }
+
+      currentGroup.push(node);
+    });
+
+    flushGroup(renderedGroups.length);
+    return renderedGroups;
+  }
+
   function renderMarkdownBlocks() {
     if (!markdownDocument.blocks.length) {
       return <div className="panel-empty">Markdown content is empty.</div>;
@@ -1283,8 +1708,9 @@ function Pane({
         const isCollapsed = collapsedMarkdownHeadings.has(block.id);
         const isHiddenHeading = hidden;
         if (!isHiddenHeading) {
+          const HeadingTag = `h${block.level}`;
           rendered.push(
-            <div key={block.id} className={`markdown-heading markdown-heading-level-${block.level}`}>
+            <HeadingTag key={block.id} id={block.id} className={`markdown-heading markdown-heading-level-${block.level}`}>
               <button
                 type="button"
                 className={`markdown-heading-toggle${isCollapsed ? "" : " markdown-heading-toggle-open"}`}
@@ -1293,11 +1719,18 @@ function Pane({
               >
                 &gt;
               </button>
-              <div
+              <span
                 className="markdown-heading-label"
                 dangerouslySetInnerHTML={{ __html: block.html }}
               />
-            </div>
+              <CopyButton
+                className="markdown-heading-copy"
+                onCopy={() => handleCopyMarkdownSection(block.id)}
+                copyLabel={`Copy section for ${block.text}`}
+                copiedLabel={`Section copied for ${block.text}`}
+                title="Copy section"
+              />
+            </HeadingTag>
           );
         }
         headingStack.push({ level: block.level, collapsed: hidden || isCollapsed });
@@ -1317,11 +1750,9 @@ function Pane({
 
       if (block.kind === "list") {
         rendered.push(
-          <ul key={`list-${rendered.length}`} className="markdown-list">
-            {block.items.map((item, index) => (
-              <li key={index} dangerouslySetInnerHTML={{ __html: item }} />
-            ))}
-          </ul>
+          <div key={`list-${rendered.length}`} className="markdown-list-shell">
+            {renderMarkdownListNodes(block.items, `list-${rendered.length}`)}
+          </div>
         );
         continue;
       }
@@ -1353,6 +1784,42 @@ function Pane({
         continue;
       }
 
+      if (block.kind === "mermaid") {
+        rendered.push(
+          <div key={`mermaid-${rendered.length}`} className="markdown-mermaid-shell">
+            <div className="markdown-mermaid-title">Mermaid</div>
+            <pre className="markdown-mermaid-fallback">
+              <code dangerouslySetInnerHTML={{ __html: block.html }} />
+            </pre>
+          </div>
+        );
+        continue;
+      }
+
+      if (block.kind === "quote") {
+        rendered.push(
+          <blockquote key={`quote-${rendered.length}`} className="markdown-quote">
+            <div className="markdown-quote-body" dangerouslySetInnerHTML={{ __html: block.html }} />
+          </blockquote>
+        );
+        continue;
+      }
+
+      if (block.kind === "callout") {
+        rendered.push(
+          <div key={`callout-${rendered.length}`} className={`markdown-callout markdown-callout-${block.calloutType}`}>
+            <div className="markdown-callout-title">{block.title}</div>
+            <div className="markdown-callout-body" dangerouslySetInnerHTML={{ __html: block.html }} />
+          </div>
+        );
+        continue;
+      }
+
+      if (block.kind === "hr") {
+        rendered.push(<hr key={`hr-${rendered.length}`} className="markdown-hr" />);
+        continue;
+      }
+
       if (block.kind === "table") {
         rendered.push(
           <div key={`table-${rendered.length}`} className="markdown-table-wrap">
@@ -1376,6 +1843,7 @@ function Pane({
             </table>
           </div>
         );
+        continue;
       }
     }
 
@@ -1431,11 +1899,11 @@ function Pane({
           const isDropBefore = dragOverPaneId === pane.id && dragOverIndex === tabIndex;
           const isDropAfter = dragOverPaneId === pane.id && dragOverIndex === tabIndex + 1;
           return (
-            <button
+            <div
               key={tab.path}
-              type="button"
               role="tab"
               aria-selected={isActive}
+              tabIndex={0}
               draggable={openTabs.length > 1}
               className={`preview-tab${openTabs.length === 1 ? " single-tab" : ""}${isActive ? " active" : ""}${isActivePane && isActive && showEditButton ? " has-actions" : ""}${isDragging ? " dragging" : ""}${isDropBefore ? " drop-before" : ""}${isDropAfter ? " drop-after" : ""}`}
               onClick={() => {
@@ -1457,6 +1925,14 @@ function Pane({
                   event.preventDefault();
                   closeTab(tab.path);
                 }
+              }}
+              onKeyDown={(event) => {
+                if (event.key !== "Enter" && event.key !== " ") {
+                  return;
+                }
+                event.preventDefault();
+                onPaneFocus?.(pane.id);
+                setActiveTabPath(tab.path);
               }}
               onDoubleClick={() => {
                 // Pinning is reserved for a later step.
@@ -1512,7 +1988,7 @@ function Pane({
               >
                 ×
               </span>
-            </button>
+            </div>
           );
         })}
       </div>
@@ -1669,12 +2145,24 @@ function Pane({
             <div className="preview-text-stage">
               {mode === "preview" ? (
                 isMarkdown ? (
-                  <div
-                    className="code-preview markdown-preview"
-                    ref={previewScrollRef}
-                    onScroll={handlePreviewScroll}
-                  >
-                    {renderMarkdownBlocks()}
+                  <div className="markdown-preview-layout">
+                    <aside className="markdown-outline" aria-label="Markdown outline">
+                      <div className="markdown-outline-title">Outline</div>
+                      {markdownDocument.headings.length > 0 ? (
+                        <div className="markdown-outline-list">
+                          {markdownDocument.headings.map((heading) => renderMarkdownOutlineItem(heading))}
+                        </div>
+                      ) : (
+                        <div className="markdown-outline-empty">No headings</div>
+                      )}
+                    </aside>
+                    <div
+                      className="code-preview markdown-preview markdown-preview-scroll"
+                      ref={previewScrollRef}
+                      onScroll={handlePreviewScroll}
+                    >
+                      {renderMarkdownBlocks()}
+                    </div>
                   </div>
                 ) : (
                   <pre className="code-preview" ref={previewScrollRef} onScroll={handlePreviewScroll}>
@@ -1725,12 +2213,24 @@ function Pane({
                       onPointerDown={handleMarkdownSplitPointerDown}
                     />
                     <div className="markdown-edit-split-pane markdown-edit-split-pane-preview">
-                      <div
-                        className="code-preview markdown-preview"
-                        ref={previewScrollRef}
-                        onScroll={handlePreviewScroll}
-                      >
-                        {renderMarkdownBlocks()}
+                      <div className="markdown-preview-layout">
+                        <aside className="markdown-outline" aria-label="Markdown outline">
+                          <div className="markdown-outline-title">Outline</div>
+                          {markdownDocument.headings.length > 0 ? (
+                            <div className="markdown-outline-list">
+                              {markdownDocument.headings.map((heading) => renderMarkdownOutlineItem(heading))}
+                            </div>
+                          ) : (
+                            <div className="markdown-outline-empty">No headings</div>
+                          )}
+                        </aside>
+                        <div
+                          className="code-preview markdown-preview markdown-preview-scroll"
+                          ref={previewScrollRef}
+                          onScroll={handlePreviewScroll}
+                        >
+                          {renderMarkdownBlocks()}
+                        </div>
                       </div>
                     </div>
                   </div>
