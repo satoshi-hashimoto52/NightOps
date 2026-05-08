@@ -6,21 +6,12 @@ import {
   DEFAULT_WEEKLY_RESET_DAY,
   DEFAULT_WEEKLY_RESET_TIME,
   formatResetDateTime,
+  calculateUsage,
   getNextLimit5hResetAt,
   getNextWeeklyResetAt
 } from "../utils/codexLimits";
 
 const DEFAULT_MODEL_OPTIONS = ["gpt-5.5", "gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex", "gpt-5.2"];
-
-function calcCodexUsage(tokens, weeklyDivisor, limit5hDivisor) {
-  const weeklyUsed = tokens / weeklyDivisor;
-  const limit5hUsed = tokens / limit5hDivisor;
-
-  return {
-    weeklyRemaining: Math.max(0, 100 - weeklyUsed),
-    limit5hRemaining: Math.max(0, 100 - limit5hUsed)
-  };
-}
 
 const DEFAULT_MARKDOWN_HEADING_COLORS = ["#8fd3ff", "#7bdc6a", "#f5c542", "#c18cff", "#e88787", "#9dd6c4"];
 function getInitialPanelPosition() {
@@ -60,6 +51,12 @@ export default function SettingsPanel({ settings, onClose, onSave, onPreviewMark
   const [selectedLaunchModel, setSelectedLaunchModel] = useState(settings.selectedLaunchModel || "");
   const [weeklyDivisor, setWeeklyDivisor] = useState(String(settings.weeklyDivisor || 750));
   const [limit5hDivisor, setLimit5hDivisor] = useState(String(settings.limit5hDivisor || 350));
+  const [limit5hRemainingPercent, setLimit5hRemainingPercent] = useState(
+    String(settings.limit5hRemainingPercent ?? 100)
+  );
+  const [weeklyRemainingPercent, setWeeklyRemainingPercent] = useState(
+    String(settings.weeklyRemainingPercent ?? 100)
+  );
   const [backgroundOpacity, setBackgroundOpacity] = useState(String(settings.backgroundOpacity ?? 0.32));
   const [containerOpacity, setContainerOpacity] = useState(String(settings.containerOpacity ?? 0.46));
   const [backgroundBlur, setBackgroundBlur] = useState(String(settings.backgroundBlur ?? 28));
@@ -76,7 +73,10 @@ export default function SettingsPanel({ settings, onClose, onSave, onPreviewMark
   const [newModelId, setNewModelId] = useState("");
   const [newModelFactor, setNewModelFactor] = useState("1");
   const [error, setError] = useState("");
+  const [requestCount, setRequestCount] = useState(0);
   const [tokenEstimate, setTokenEstimate] = useState(0);
+  const [tokenEstimate5h, setTokenEstimate5h] = useState(0);
+  const [tokenEstimateWeek, setTokenEstimateWeek] = useState(0);
   const [panelPosition, setPanelPosition] = useState(() => getInitialPanelPosition());
   const [panelSize, setPanelSize] = useState(() => getInitialPanelSize());
 
@@ -85,11 +85,16 @@ export default function SettingsPanel({ settings, onClose, onSave, onPreviewMark
     [models]
   );
   const usageFactor = models.find((item) => item.id === usageModel)?.factor || 1;
-  const usagePreview = calcCodexUsage(
-    tokenEstimate * usageFactor,
-    Number(weeklyDivisor) > 0 ? Number(weeklyDivisor) : 750,
-    Number(limit5hDivisor) > 0 ? Number(limit5hDivisor) : 350
-  );
+  const weeklyBaseline = Number(settings.weeklyBaselineTokenEstimate) || 0;
+  const limit5hBaseline = Number(settings.limit5hBaselineTokenEstimate) || 0;
+  const usagePreview = calculateUsage({
+    requestCount,
+    tokenEstimate,
+    weeklyBaselineTokenEstimate: weeklyBaseline,
+    limit5hBaselineTokenEstimate: limit5hBaseline,
+    weeklyUsedTokenEstimate: tokenEstimateWeek,
+    limit5hUsedTokenEstimate: tokenEstimate5h
+  });
   const next5hReset = getNextLimit5hResetAt(new Date(), limit5hResetTime);
   const nextWeeklyReset = getNextWeeklyResetAt(new Date(), weeklyResetMonth, weeklyResetDay, weeklyResetTime);
 
@@ -99,6 +104,8 @@ export default function SettingsPanel({ settings, onClose, onSave, onPreviewMark
     setSelectedLaunchModel(settings.selectedLaunchModel || "");
     setWeeklyDivisor(String(settings.weeklyDivisor || 750));
     setLimit5hDivisor(String(settings.limit5hDivisor || 350));
+    setLimit5hRemainingPercent(String(settings.limit5hRemainingPercent ?? 100));
+    setWeeklyRemainingPercent(String(settings.weeklyRemainingPercent ?? 100));
     setBackgroundOpacity(String(settings.backgroundOpacity ?? 0.32));
     setContainerOpacity(String(settings.containerOpacity ?? 0.46));
     setBackgroundBlur(String(settings.backgroundBlur ?? 28));
@@ -118,9 +125,15 @@ export default function SettingsPanel({ settings, onClose, onSave, onPreviewMark
     async function loadCodexStats() {
       try {
         const stats = await getCodexStats();
+        setRequestCount(Number(stats.requestCount) || 0);
         setTokenEstimate(stats.tokenEstimate || 0);
+        setTokenEstimate5h(stats.tokenEstimate5h || 0);
+        setTokenEstimateWeek(stats.tokenEstimateWeek || 0);
       } catch {
+        setRequestCount(0);
         setTokenEstimate(0);
+        setTokenEstimate5h(0);
+        setTokenEstimateWeek(0);
       }
     }
 
@@ -146,6 +159,31 @@ export default function SettingsPanel({ settings, onClose, onSave, onPreviewMark
       prev.map((item) =>
         item.id === usageModel ? { ...item, factor: value } : item
       )
+    );
+  }
+
+  function handleApplyRemainingPercent(kind) {
+    const currentUsed = kind === "limit5h" ? usagePreview.limit5hUsedTokenEstimate : usagePreview.weeklyUsedTokenEstimate;
+    const targetRemaining = Number(kind === "limit5h" ? limit5hRemainingPercent : weeklyRemainingPercent);
+    const baselineKey = kind === "limit5h" ? "limit5hBaselineTokenEstimate" : "weeklyBaselineTokenEstimate";
+    const ratio = Math.max(0.01, 1 - Number(targetRemaining) / 100);
+    const nextBaseline = currentUsed / ratio;
+
+    if (!(Number(targetRemaining) >= 0 && Number(targetRemaining) <= 100)) {
+      setError("Remaining percent must be between 0 and 100");
+      return;
+    }
+
+    onSave(
+      {
+        ...settings,
+        [baselineKey]: nextBaseline,
+        limit5hBaselineTokenEstimate:
+          kind === "limit5h" ? nextBaseline : Number(settings.limit5hBaselineTokenEstimate) || 0,
+        weeklyBaselineTokenEstimate:
+          kind === "weekly" ? nextBaseline : Number(settings.weeklyBaselineTokenEstimate) || 0
+      },
+      { keepOpen: true }
     );
   }
 
@@ -236,6 +274,18 @@ export default function SettingsPanel({ settings, onClose, onSave, onPreviewMark
       return;
     }
 
+    if (
+      !(
+        Number(limit5hRemainingPercent) >= 0 &&
+        Number(limit5hRemainingPercent) <= 100 &&
+        Number(weeklyRemainingPercent) >= 0 &&
+        Number(weeklyRemainingPercent) <= 100
+      )
+    ) {
+      setError("Remaining percent must be between 0 and 100");
+      return;
+    }
+
     const nextBackgroundOpacity = Number(backgroundOpacity);
     const nextContainerOpacity = Number(containerOpacity);
     const nextBackgroundBlur = Number(backgroundBlur);
@@ -276,8 +326,6 @@ export default function SettingsPanel({ settings, onClose, onSave, onPreviewMark
         weeklyResetTime,
         limit5hNextResetAt: next5hReset.toISOString(),
         weeklyNextResetAt: nextWeeklyReset.toISOString(),
-        limit5hBaselineTokenEstimate: tokenEstimate,
-        weeklyBaselineTokenEstimate: tokenEstimate,
         backgroundOpacity: nextBackgroundOpacity,
         containerOpacity: nextContainerOpacity,
         backgroundBlur: nextBackgroundBlur,
@@ -544,6 +592,41 @@ export default function SettingsPanel({ settings, onClose, onSave, onPreviewMark
                 <div>{`係数: ${usageFactor}`}</div>
                 <div>{`5H: ${Math.round(usagePreview.limit5hRemaining)}%`}</div>
                 <div>{`Week: ${Math.round(usagePreview.weeklyRemaining)}%`}</div>
+              </div>
+            </div>
+
+            <div className="field">
+              <span>Current Remaining %</span>
+              <FieldHelp>表示残量。</FieldHelp>
+              <div className="settings-usage-grid settings-usage-grid-inline">
+                <label className="settings-inline-field">
+                  <span>5H</span>
+                  <input
+                    type="number"
+                    min="0"
+                    max="100"
+                    step="1"
+                    value={limit5hRemainingPercent}
+                    onChange={(event) => setLimit5hRemainingPercent(event.target.value)}
+                  />
+                  <button type="button" className="ghost-button" onClick={() => handleApplyRemainingPercent("limit5h")}>
+                    Reflect
+                  </button>
+                </label>
+                <label className="settings-inline-field">
+                  <span>Week</span>
+                  <input
+                    type="number"
+                    min="0"
+                    max="100"
+                    step="1"
+                    value={weeklyRemainingPercent}
+                    onChange={(event) => setWeeklyRemainingPercent(event.target.value)}
+                  />
+                  <button type="button" className="ghost-button" onClick={() => handleApplyRemainingPercent("weekly")}>
+                    Reflect
+                  </button>
+                </label>
               </div>
             </div>
 

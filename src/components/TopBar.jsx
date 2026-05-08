@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { CartesianGrid, Line, LineChart, ResponsiveContainer, YAxis } from "recharts";
 import { getCodexStats } from "../utils/codexLog";
 import { getSystemUsage } from "../utils/system";
-import { formatResetDateTime, getLimitUsageRemaining } from "../utils/codexLimits";
+import { calculateUsage, formatResetDateTime } from "../utils/codexLimits";
 
 function getRemainingTone(value) {
   if (value >= 80) {
@@ -57,20 +57,17 @@ export default function TopBar({
   const [codex, setCodex] = useState({
     requestCount: 0,
     sessionCount: 0,
-    tokenEstimate: 0
+    tokenEstimate: 0,
+    tokenEstimate5h: 0,
+    tokenEstimateWeek: 0
   });
 
-  const currentModelFactor = codexModels.find((item) => item.id === usageModel)?.factor || 1;
-  const limit5hUsageRemaining = getLimitUsageRemaining(
-    codex.tokenEstimate * currentModelFactor,
-    Number(limit5hBaselineTokenEstimate) * currentModelFactor,
-    limit5hDivisor || 350
-  );
-  const weeklyUsageRemaining = getLimitUsageRemaining(
-    codex.tokenEstimate * currentModelFactor,
-    Number(weeklyBaselineTokenEstimate) * currentModelFactor,
-    weeklyDivisor || 750
-  );
+  const usage = calculateUsage({
+    weeklyBaselineTokenEstimate,
+    limit5hBaselineTokenEstimate,
+    weeklyUsedTokenEstimate: codex.tokenEstimateWeek,
+    limit5hUsedTokenEstimate: codex.tokenEstimate5h
+  });
 
   useEffect(() => {
     let cancelled = false;
@@ -80,7 +77,13 @@ export default function TopBar({
         const [nextSystem, nextCodex] = await Promise.all([getSystemUsage(), getCodexStats()]);
         if (!cancelled) {
           setSystem(nextSystem);
-          setCodex(nextCodex);
+          setCodex({
+            requestCount: Number(nextCodex.requestCount) || 0,
+            sessionCount: Number(nextCodex.sessionCount) || 0,
+            tokenEstimate: Number(nextCodex.tokenEstimate) || 0,
+            tokenEstimate5h: Number(nextCodex.tokenEstimate5h) || 0,
+            tokenEstimateWeek: Number(nextCodex.tokenEstimateWeek) || 0
+          });
           setHistory((prev) =>
             [...prev, { cpu: nextSystem.cpu || 0, mem: nextSystem.memoryPercent || 0 }].slice(-30)
           );
@@ -97,7 +100,9 @@ export default function TopBar({
           setCodex({
             requestCount: 0,
             sessionCount: 0,
-            tokenEstimate: 0
+            tokenEstimate: 0,
+            tokenEstimate5h: 0,
+            tokenEstimateWeek: 0
           });
           setHistory((prev) => [...prev, { cpu: 0, mem: 0 }].slice(-30));
         }
@@ -157,16 +162,16 @@ export default function TopBar({
           <Metric plain value={`REQ : ${String(codex.requestCount).padStart(7, " ")}`} />
           <Metric
             plain
-            value={`5H  : ${`${Math.round(limit5hUsageRemaining)}%`.padStart(7, " ")}`}
+            value={`5H  : ${`${Math.round(usage.limit5hRemaining)}%`.padStart(7, " ")}`}
             meta={limit5hNextResetAt ? `next ${formatResetDateTime(new Date(limit5hNextResetAt))}` : ""}
-            tone={getRemainingTone(limit5hUsageRemaining)}
+            tone={getRemainingTone(usage.limit5hRemaining)}
           />
           <Metric plain value={`TOK : ${codex.tokenEstimate.toLocaleString().padStart(7, " ")}`} />
           <Metric
             plain
-            value={`WEEK : ${`${Math.round(weeklyUsageRemaining)}%`.padStart(5, " ")}`}
+            value={`WEEK : ${`${Math.round(usage.weeklyRemaining)}%`.padStart(5, " ")}`}
             meta={weeklyNextResetAt ? `next ${formatResetDateTime(new Date(weeklyNextResetAt))}` : ""}
-            tone={getRemainingTone(weeklyUsageRemaining)}
+            tone={getRemainingTone(usage.weeklyRemaining)}
           />
         </div>
       </div>

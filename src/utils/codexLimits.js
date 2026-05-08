@@ -77,6 +77,33 @@ export function formatResetDateTime(date) {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
 
+export function estimateCodexTokens(text) {
+  const raw = typeof text === "string" ? text : String(text ?? "");
+  return Math.max(1, Math.ceil(raw.length / 4));
+}
+
+export function getCurrentLimit5hWindowStart(now, resetTime) {
+  const current = now instanceof Date ? now : new Date(now);
+  const nextResetAt = getNextLimit5hResetAt(current, resetTime);
+  return new Date(nextResetAt.getTime() - FIVE_HOURS_MS);
+}
+
+export function getCurrentWeeklyWindowStart(now, resetMonth, resetDay, resetTime) {
+  const current = now instanceof Date ? now : new Date(now);
+  const month = normalizeMonth(resetMonth, DEFAULT_WEEKLY_RESET_MONTH);
+  const day = normalizeDayOfMonth(resetDay, DEFAULT_WEEKLY_RESET_DAY);
+  const { hour, minute } = parseTimeString(resetTime, 0, 0);
+  const candidate = new Date(current);
+  candidate.setSeconds(0, 0);
+  candidate.setHours(hour, minute, 0, 0);
+  candidate.setMonth(month - 1, Math.min(day, getDaysInMonth(candidate.getFullYear(), month)));
+  if (candidate > current) {
+    candidate.setFullYear(candidate.getFullYear() - 1);
+    candidate.setMonth(month - 1, Math.min(day, getDaysInMonth(candidate.getFullYear(), month)));
+  }
+  return candidate;
+}
+
 export function getNextLimit5hResetAt(now, resetTime, previousResetAt = "") {
   const current = now instanceof Date ? now : new Date(now);
   if (previousResetAt) {
@@ -180,4 +207,60 @@ export function getLimitUsageRemaining(tokenEstimate, baselineTokenEstimate, div
   const windowTokens = Math.max(0, Number(tokenEstimate) - Number(baselineTokenEstimate || 0));
   const scale = Number(divisor) > 0 ? Number(divisor) : 1;
   return Math.max(0, 100 - windowTokens / scale);
+}
+
+export function calculateUsage({
+  requestCount = 0,
+  tokenEstimate = 0,
+  modelFactor = 1,
+  weeklyDivisor = 750,
+  limit5hDivisor = 350,
+  weeklyBaselineTokenEstimate = 0,
+  limit5hBaselineTokenEstimate = 0,
+  weeklyUsedTokenEstimate = 0,
+  limit5hUsedTokenEstimate = 0
+} = {}) {
+  const safeRequestCount = Math.max(0, Number(requestCount) || 0);
+  const safeTokenEstimate = Math.max(0, Number(tokenEstimate) || 0);
+  const safeModelFactor = Number(modelFactor) > 0 ? Number(modelFactor) : 1;
+  const safeWeeklyDivisor = Number(weeklyDivisor) > 0 ? Number(weeklyDivisor) : 1;
+  const safeLimit5hDivisor = Number(limit5hDivisor) > 0 ? Number(limit5hDivisor) : 1;
+  const safeWeeklyBaselineTokenEstimate = Number.isFinite(Number(weeklyBaselineTokenEstimate))
+    ? Number(weeklyBaselineTokenEstimate)
+    : 0;
+  const safeLimit5hBaselineTokenEstimate = Number.isFinite(Number(limit5hBaselineTokenEstimate))
+    ? Number(limit5hBaselineTokenEstimate)
+    : 0;
+  const safeWeeklyUsedTokenEstimate = Math.max(0, Number(weeklyUsedTokenEstimate) || 0);
+  const safeLimit5hUsedTokenEstimate = Math.max(0, Number(limit5hUsedTokenEstimate) || 0);
+  const remainingWeeklyTokens = Math.max(0, safeWeeklyBaselineTokenEstimate - safeWeeklyUsedTokenEstimate);
+  const remainingLimit5hTokens = Math.max(0, safeLimit5hBaselineTokenEstimate - safeLimit5hUsedTokenEstimate);
+  const weeklyRemaining = safeWeeklyBaselineTokenEstimate > 0 ? (remainingWeeklyTokens / safeWeeklyBaselineTokenEstimate) * 100 : 0;
+  const limit5hRemaining = safeLimit5hBaselineTokenEstimate > 0 ? (remainingLimit5hTokens / safeLimit5hBaselineTokenEstimate) * 100 : 0;
+
+  console.log({
+    baseline: {
+      weekly: safeWeeklyBaselineTokenEstimate,
+      limit5h: safeLimit5hBaselineTokenEstimate
+    },
+    used: {
+      weekly: safeWeeklyUsedTokenEstimate,
+      limit5h: safeLimit5hUsedTokenEstimate
+    },
+    remaining: {
+      weekly: remainingWeeklyTokens,
+      limit5h: remainingLimit5hTokens
+    }
+  });
+
+  return {
+    weeklyRemaining,
+    limit5hRemaining,
+    weeklyRemainingTokens: remainingWeeklyTokens,
+    limit5hRemainingTokens: remainingLimit5hTokens,
+    weeklyUsedTokenEstimate: safeWeeklyUsedTokenEstimate,
+    limit5hUsedTokenEstimate: safeLimit5hUsedTokenEstimate,
+    weeklyBaselineTokenEstimate: safeWeeklyBaselineTokenEstimate,
+    limit5hBaselineTokenEstimate: safeLimit5hBaselineTokenEstimate
+  };
 }

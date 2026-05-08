@@ -11,7 +11,16 @@ import {
   getNextWeeklyResetAt,
   needsReset
 } from "./utils/codexLimits";
-import { browseDirectory, copyFileToDirectory, createFileFromBuffer, getSettings, listDirectory, saveSettings } from "./utils/fileLoader";
+import {
+  browseDirectory,
+  copyFilePath,
+  copyFileToDirectory,
+  createFileFromBuffer,
+  getSettings,
+  listDirectory,
+  revealFile,
+  saveSettings
+} from "./utils/fileLoader";
 
 const SELECTED_FILE_KEY = "nightops:selected-file";
 
@@ -77,9 +86,11 @@ export default function App() {
   const [previewMarkdownHeadingColors, setPreviewMarkdownHeadingColors] = useState([]);
   const [notice, setNotice] = useState("");
   const [treeCollapsed, setTreeCollapsed] = useState(false);
-  const [sidebarWidth, setSidebarWidth] = useState(320);
+  const [sidebarWidth, setSidebarWidth] = useState(140);
   const [treeReloadToken, setTreeReloadToken] = useState(0);
+  const [browseMenu, setBrowseMenu] = useState(null);
   const leftPanelRef = useRef(null);
+  const paneContainerRef = useRef(null);
   const [settings, setSettings] = useState({
     initialDirectory: "",
     codexModels: [],
@@ -106,6 +117,13 @@ export default function App() {
     diskFreeGb: 0,
     diskTotalGb: 0
   });
+
+  function handleSelectFile(file) {
+    setSelectedFile(file);
+    if (file?.path) {
+      paneContainerRef.current?.openFile?.(file);
+    }
+  }
 
   const appStyle = {
     "--app-shell-alpha": String(settings.backgroundOpacity),
@@ -219,10 +237,8 @@ export default function App() {
         const now = new Date();
         const nextSettings = { ...settings };
         let updated = false;
-        const currentTokenEstimate = Number(stats?.tokenEstimate) || 0;
 
         if (needsReset(nextSettings.limit5hNextResetAt, now)) {
-          nextSettings.limit5hBaselineTokenEstimate = currentTokenEstimate;
           nextSettings.limit5hNextResetAt = getNextLimit5hResetAt(
             now,
             nextSettings.limit5hResetTime,
@@ -232,7 +248,6 @@ export default function App() {
         }
 
         if (needsReset(nextSettings.weeklyNextResetAt, now)) {
-          nextSettings.weeklyBaselineTokenEstimate = currentTokenEstimate;
           nextSettings.weeklyNextResetAt = getNextWeeklyResetAt(
             now,
             nextSettings.weeklyResetMonth,
@@ -342,7 +357,7 @@ export default function App() {
         return;
       }
 
-      const nextWidth = Math.min(Math.max(event.clientX - 16, 220), Math.floor(window.innerWidth * 0.6));
+      const nextWidth = Math.min(Math.max(event.clientX - 16, 140), Math.floor(window.innerWidth * 0.6));
       setSidebarWidth(nextWidth);
     }
 
@@ -390,18 +405,51 @@ export default function App() {
     }
   }
 
+  async function handleCopyRootPath() {
+    if (!rootPath) {
+      return;
+    }
+
+    await copyFilePath(rootPath);
+    setBrowseMenu(null);
+    setNotice(`Copied: ${rootPath}`);
+  }
+
+  async function handleRevealRootPath() {
+    if (!rootPath) {
+      return;
+    }
+
+    await revealFile(rootPath);
+    setBrowseMenu(null);
+  }
+
+  useEffect(() => {
+    function handlePointerDown() {
+      setBrowseMenu(null);
+    }
+
+    window.addEventListener("pointerdown", handlePointerDown);
+    return () => window.removeEventListener("pointerdown", handlePointerDown);
+  }, []);
+
   async function handleLaunchModelChange(nextModel) {
     const nextSettings = await saveSettings({ ...settings, selectedLaunchModel: nextModel });
     setSettings(nextSettings);
   }
 
-  async function handleSaveSettings(nextSettings) {
+  async function handleSaveSettings(nextSettings, options = {}) {
     try {
+      setSettings(nextSettings);
+      setPreviewMarkdownHeadingColors(nextSettings.markdownHeadingColors || []);
+      setRootPath(nextSettings.initialDirectory || "");
       const saved = await saveSettings(nextSettings);
       setSettings(saved);
       setPreviewMarkdownHeadingColors(saved.markdownHeadingColors || []);
       setRootPath(saved.initialDirectory);
-      setSettingsOpen(false);
+      if (!options.keepOpen) {
+        setSettingsOpen(false);
+      }
       setNotice("Settings saved");
     } catch (error) {
       setNotice(error?.message || "Failed to save settings");
@@ -538,9 +586,55 @@ export default function App() {
       <div className="window-drag-bar">
         <div className="window-path-area">
           <div className="window-path">{`NightOps — ${rootPath || "No directory selected"}`}</div>
-          <button type="button" className="window-browse-button" onClick={handleBrowseDirectory}>
+          <button
+            type="button"
+            className="window-browse-button"
+            onClick={handleBrowseDirectory}
+            onMouseDown={(event) => {
+              if (event.button !== 2) {
+                return;
+              }
+              event.preventDefault();
+              if (!rootPath) {
+                return;
+              }
+              setBrowseMenu({
+                x: event.clientX,
+                y: event.clientY
+              });
+            }}
+            onContextMenu={(event) => {
+              event.preventDefault();
+              if (!rootPath) {
+                return;
+              }
+              setBrowseMenu({
+                x: event.clientX,
+                y: event.clientY
+              });
+            }}
+          >
             Browse
           </button>
+          {browseMenu ? (
+            <div
+              className="window-browse-menu"
+              style={{ left: `${browseMenu.x}px`, top: `${browseMenu.y}px` }}
+              onPointerDown={(event) => event.stopPropagation()}
+              onContextMenu={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+              }}
+              onClick={(event) => event.stopPropagation()}
+            >
+              <button type="button" className="window-browse-menu-item" onClick={handleCopyRootPath} disabled={!rootPath}>
+                Copy Full Path
+              </button>
+              <button type="button" className="window-browse-menu-item" onClick={handleRevealRootPath} disabled={!rootPath}>
+                Show in Finder
+              </button>
+            </div>
+          ) : null}
         </div>
         <button className="window-launch-button" onClick={() => setLaunchOpen(true)}>
           Launch
@@ -577,7 +671,7 @@ export default function App() {
                 <FileTree
                   rootPath={rootPath}
                   selectedFilePath={selectedFile?.path}
-                  onSelectFile={setSelectedFile}
+                  onSelectFile={handleSelectFile}
                   onDropFiles={onDropFiles}
                   onNotify={setNotice}
                   reloadToken={treeReloadToken}
@@ -597,8 +691,9 @@ export default function App() {
         <main className="right-panel">
           <div className="panel-title">Preview / Editor</div>
           <PaneContainer
+            ref={paneContainerRef}
             selectedFile={selectedFile}
-            onSelectFile={setSelectedFile}
+            onSelectFile={handleSelectFile}
             onSaved={() => setNotice("Saved")}
             markdownHeadingColors={previewMarkdownHeadingColors.length > 0 ? previewMarkdownHeadingColors : settings.markdownHeadingColors}
           />

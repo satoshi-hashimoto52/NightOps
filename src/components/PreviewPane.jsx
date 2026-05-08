@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
 import hljs from "highlight.js/lib/core";
 import javascript from "highlight.js/lib/languages/javascript";
 import json from "highlight.js/lib/languages/json";
@@ -322,6 +322,7 @@ function createEmptyTabState(path, name) {
 
 function Pane({
   pane,
+  isActivePane,
   selectedFile,
   onSelectFile,
   onSaved,
@@ -329,7 +330,18 @@ function Pane({
   onUpdatePane,
   onSplitRight,
   onPaneFocus,
-  onMoveTabToPane
+  draggingTab,
+  dragOverPaneId,
+  dragOverIndex,
+  onTabDragStart,
+  onTabDragOver,
+  onTabDrop,
+  onTabDragEnd,
+  onPaneDragOver,
+  onPaneDrop,
+  onPaneDragLeave,
+  edgeDropPosition,
+  onPaneEmpty
 }) {
   const tabStateRef = useRef(new Map());
   const previewScrollRef = useRef(null);
@@ -359,14 +371,10 @@ function Pane({
   const editorGutterRef = useRef(null);
   const markdownSplitRef = useRef(null);
   const markdownSplitDragRef = useRef({ dragging: false });
-  const tabDragRafRef = useRef(0);
   const openTabs = pane?.tabs || [];
   const activeTabPath = pane?.activeTabPath || "";
   const activeTab = openTabs.find((tab) => tab.path === activeTabPath) || null;
   const activeTabName = activeTab?.name || selectedFile?.name || "";
-  const [draggingTabPath, setDraggingTabPath] = useState("");
-  const [dragOverTabPath, setDragOverTabPath] = useState("");
-  const [dragPosition, setDragPosition] = useState("");
   const [tabContextMenu, setTabContextMenu] = useState(null);
   const isMarkdown = Boolean(fileData && isMarkdownFileName(fileData.name));
   const markdownDocument = useMemo(
@@ -602,6 +610,9 @@ function Pane({
     }
 
     setOpenTabs(nextTabs);
+    if (nextTabs.length === 0) {
+      onPaneEmpty?.(pane.id);
+    }
 
     if (activeTabPath !== tabPath) {
       return;
@@ -627,90 +638,6 @@ function Pane({
     setError("");
     setPdfPages([]);
     setImageNavFiles([]);
-  }
-
-  function resetTabDragState() {
-    if (tabDragRafRef.current) {
-      cancelAnimationFrame(tabDragRafRef.current);
-      tabDragRafRef.current = 0;
-    }
-    setDraggingTabPath("");
-    setDragOverTabPath("");
-    setDragPosition("");
-  }
-
-  function reorderTabs(dragPath, targetPath, position) {
-    if (!dragPath || !targetPath || dragPath === targetPath) {
-      return;
-    }
-
-    setOpenTabs((current) => {
-      const fromIndex = current.findIndex((tab) => tab.path === dragPath);
-      const targetIndex = current.findIndex((tab) => tab.path === targetPath);
-      if (fromIndex === -1 || targetIndex === -1) {
-        return current;
-      }
-
-      const dragTab = current[fromIndex];
-      const remaining = current.filter((tab) => tab.path !== dragPath);
-      const remainingTargetIndex = remaining.findIndex((tab) => tab.path === targetPath);
-      if (remainingTargetIndex === -1) {
-        return current;
-      }
-
-      const insertIndex = position === "after" ? remainingTargetIndex + 1 : remainingTargetIndex;
-      const nextTabs = [...remaining];
-      nextTabs.splice(insertIndex, 0, dragTab);
-      if (nextTabs.length === current.length && nextTabs.every((tab, index) => tab.path === current[index].path)) {
-        return current;
-      }
-      return nextTabs;
-    });
-  }
-
-  function handleTabDragStart(tabPath, event) {
-    if (openTabs.length <= 1) {
-      return;
-    }
-
-    setDraggingTabPath(tabPath);
-    setDragOverTabPath("");
-    setDragPosition("");
-  }
-
-  function handleTabDragOver(tabPath, event) {
-    if (!draggingTabPath || draggingTabPath === tabPath) {
-      return;
-    }
-
-    event.preventDefault();
-
-    const rect = event.currentTarget.getBoundingClientRect();
-    const clientX = event.clientX;
-    const nextPosition = clientX < rect.left + rect.width / 2 ? "before" : "after";
-
-    if (tabDragRafRef.current) {
-      cancelAnimationFrame(tabDragRafRef.current);
-    }
-
-    tabDragRafRef.current = requestAnimationFrame(() => {
-      setDragOverTabPath((current) => (current === tabPath ? current : tabPath));
-      setDragPosition((current) => (current === nextPosition ? current : nextPosition));
-    });
-  }
-
-  function handleTabDrop(tabPath) {
-    if (!draggingTabPath || draggingTabPath === tabPath) {
-      resetTabDragState();
-      return;
-    }
-
-    reorderTabs(draggingTabPath, tabPath, dragPosition || "before");
-    resetTabDragState();
-  }
-
-  function handleTabDragEnd() {
-    resetTabDragState();
   }
 
   function handleTabContextMenu(tab, event) {
@@ -763,20 +690,6 @@ function Pane({
       window.removeEventListener("pointercancel", handlePointerUp);
     };
   }, []);
-
-  useEffect(() => {
-    if (!selectedFile?.path) {
-      return;
-    }
-
-    setOpenTabs((current) => {
-      if (current.some((tab) => tab.path === selectedFile.path)) {
-        return current;
-      }
-      return [...current, { path: selectedFile.path, name: selectedFile.name, isDirty: false }];
-    });
-    setActiveTabPath(selectedFile.path);
-  }, [selectedFile]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1282,7 +1195,8 @@ function Pane({
   const isImage = Boolean(fileData && fileData.type === "image");
   const isCsv = Boolean(fileData && fileData.type === "csv");
   const canEdit = Boolean(fileData && fileData.editable);
-  const showTextControls = Boolean(canEdit && !isPdf && !isImage && !isCsv);
+  const showEditButton = Boolean(canEdit && !isPdf && !isImage && !isCsv);
+  const showSaveButton = Boolean(showEditButton && activeTab?.isDirty && mode === "edit");
   const csvRows = isCsv && fileData ? parseCsv(fileData.content) : [];
   const imageNavIndex = isImage ? imageNavFiles.findIndex((item) => item.path === activeTabPath) : -1;
   const canNavigateImages = isImage && imageNavIndex >= 0 && imageNavFiles.length > 1;
@@ -1414,7 +1328,10 @@ function Pane({
     <div
       ref={previewShellRef}
       id="pane-refactor-before-split"
-      className="preview-shell"
+      className={`preview-shell${dragOverPaneId === pane.id ? " drag-over" : ""}`}
+      onDragOver={(event) => onPaneDragOver?.(pane.id, event)}
+      onDrop={(event) => onPaneDrop?.(pane.id, event)}
+      onDragLeave={(event) => onPaneDragLeave?.(pane.id, event)}
       style={{
         "--preview-font-scale": previewFontScale,
         "--markdown-heading-color-1": markdownHeadingColors?.[0] || "#8fd3ff",
@@ -1425,11 +1342,30 @@ function Pane({
         "--markdown-heading-color-6": markdownHeadingColors?.[5] || "#9dd6c4"
       }}
     >
-      <div className="preview-tabs" role="tablist" aria-label="Opened files">
-        {openTabs.map((tab) => {
+      {edgeDropPosition ? (
+        <div
+          className={`pane-edge-preview pane-edge-preview-${edgeDropPosition}`}
+          aria-hidden="true"
+        />
+      ) : null}
+      <div
+        className="preview-tabs"
+        role="tablist"
+        aria-label="Opened files"
+        onWheel={(event) => {
+          if (openTabs.length <= 1) {
+            return;
+          }
+
+          event.currentTarget.scrollLeft += event.deltaY || event.deltaX;
+          event.preventDefault();
+        }}
+      >
+        {openTabs.map((tab, tabIndex) => {
           const isActive = tab.path === activeTabPath;
-          const isDragging = draggingTabPath === tab.path;
-          const isDropTarget = dragOverTabPath === tab.path && draggingTabPath && draggingTabPath !== tab.path;
+          const isDragging = draggingTab?.path === tab.path && draggingTab?.fromPaneId === pane.id;
+          const isDropBefore = dragOverPaneId === pane.id && dragOverIndex === tabIndex;
+          const isDropAfter = dragOverPaneId === pane.id && dragOverIndex === tabIndex + 1;
           return (
             <button
               key={tab.path}
@@ -1437,15 +1373,20 @@ function Pane({
               role="tab"
               aria-selected={isActive}
               draggable={openTabs.length > 1}
-              className={`preview-tab${isActive ? " active" : ""}${isDragging ? " dragging" : ""}${isDropTarget ? ` drop-${dragPosition}` : ""}`}
-              onClick={() => setActiveTabPath(tab.path)}
-              onDragStart={(event) => handleTabDragStart(tab.path, event)}
-              onDragOver={(event) => handleTabDragOver(tab.path, event)}
-              onDrop={(event) => {
-                event.preventDefault();
-                handleTabDrop(tab.path);
+              className={`preview-tab${openTabs.length === 1 ? " single-tab" : ""}${isActive ? " active" : ""}${isActivePane && isActive && showEditButton ? " has-actions" : ""}${isDragging ? " dragging" : ""}${isDropBefore ? " drop-before" : ""}${isDropAfter ? " drop-after" : ""}`}
+              onClick={() => {
+                console.log("TAB CLICK", {
+                  paneId: pane.id,
+                  path: tab.path,
+                  tabs: pane.tabs
+                });
+                onPaneFocus?.(pane.id);
+                setActiveTabPath(tab.path);
               }}
-              onDragEnd={handleTabDragEnd}
+              onDragStart={(event) => onTabDragStart?.(pane.id, tab.path, event)}
+              onDragOver={(event) => onTabDragOver?.(pane.id, tab.path, tabIndex, event)}
+              onDrop={(event) => onTabDrop?.(pane.id, tab.path, tabIndex, event)}
+              onDragEnd={() => onTabDragEnd?.()}
               onContextMenu={(event) => handleTabContextMenu(tab, event)}
               onAuxClick={(event) => {
                 if (event.button === 1) {
@@ -1458,6 +1399,40 @@ function Pane({
               }}
             >
               <span className="preview-tab-name">{tab.name}</span>
+              {isActivePane && isActive && showEditButton ? (
+                <span className="preview-active-tab-actions">
+                  <button
+                    type="button"
+                    className={`preview-mode-button ${mode === "preview" ? "action-edit active" : "action-preview"}`}
+                    onClick={(event) => {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      setMode((current) => (current === "preview" ? "edit" : "preview"));
+                    }}
+                  >
+                    {mode === "preview" ? "Edit" : "Preview"}
+                  </button>
+                  {showSaveButton ? (
+                    <button
+                      type="button"
+                      className="save-button action-save"
+                      onClick={async (event) => {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        await saveFile(fileData.path, editValue);
+                        setBaseEditValue(editValue);
+                        syncActiveTabState({
+                          baseEditValue: editValue,
+                          isDirty: false
+                        });
+                        onSaved();
+                      }}
+                    >
+                      Save
+                    </button>
+                  ) : null}
+                </span>
+              ) : null}
               {tab.isDirty ? <span className="preview-tab-dirty" aria-hidden="true">●</span> : null}
               <span
                 className="preview-tab-close"
@@ -1502,32 +1477,6 @@ function Pane({
         <div className="preview-toolbar-main">
           <div className="preview-toolbar-row">
             <div className="preview-actions">
-              {showTextControls ? (
-                <>
-                  <button
-                    type="button"
-                    className={`preview-mode-button${mode === "preview" ? " active" : ""}`}
-                    onClick={() => setMode((current) => (current === "preview" ? "edit" : "preview"))}
-                  >
-                    {mode === "preview" ? "Edit" : "Preview"}
-                  </button>
-                  <button
-                    type="button"
-                    className="save-button"
-                    onClick={async () => {
-                      await saveFile(fileData.path, editValue);
-                      setBaseEditValue(editValue);
-                      syncActiveTabState({
-                        baseEditValue: editValue,
-                        isDirty: false
-                      });
-                      onSaved();
-                    }}
-                  >
-                    Save
-                  </button>
-                </>
-              ) : null}
               {isPdf ? (
                 <>
                   <button
@@ -1756,10 +1705,21 @@ function Pane({
   );
 }
 
-export default function PaneContainer({ selectedFile, onSelectFile, onSaved, markdownHeadingColors }) {
+const PaneContainer = forwardRef(function PaneContainer({ selectedFile, onSelectFile, onSaved, markdownHeadingColors }, ref) {
   const [panes, setPanes] = useState(() => [{ id: "pane-1", tabs: [], activeTabPath: "" }]);
   const [activePaneId, setActivePaneId] = useState("pane-1");
+  const [splitRatio, setSplitRatio] = useState(0.5);
+  const [draggingTab, setDraggingTab] = useState(null);
+  const [dragOverPaneId, setDragOverPaneId] = useState("");
+  const [dragOverIndex, setDragOverIndex] = useState(null);
+  const [edgeDropPosition, setEdgeDropPosition] = useState(null);
   const paneIdRef = useRef(2);
+  const containerRef = useRef(null);
+  const resizingRef = useRef(false);
+  const resizeRafRef = useRef(0);
+  const resizeRatioRef = useRef(0.5);
+  const dragRafRef = useRef(0);
+  const edgeDropPositionRef = useRef(null);
 
   function updatePane(paneId, updater) {
     setPanes((current) =>
@@ -1772,11 +1732,111 @@ export default function PaneContainer({ selectedFile, onSelectFile, onSaved, mar
     );
   }
 
+  function openFile(file) {
+    if (!file?.path) {
+      return;
+    }
+
+    const targetPane = panes.find((pane) => pane.id === activePaneId) || panes[0];
+    if (!targetPane) {
+      return;
+    }
+
+    console.log("TAB CLICK", {
+      paneId: targetPane.id,
+      path: file.path,
+      tabs: targetPane.tabs
+    });
+
+    setPanes((current) =>
+      current.map((pane) => {
+        if (pane.id !== targetPane.id) {
+          return pane;
+        }
+
+        if (pane.tabs.some((tab) => tab.path === file.path)) {
+          return {
+            ...pane,
+            activeTabPath: file.path
+          };
+        }
+
+        return {
+          ...pane,
+          tabs: [...pane.tabs, { path: file.path, name: file.name, isDirty: false }],
+          activeTabPath: file.path
+        };
+      })
+    );
+  }
+
+  useImperativeHandle(
+    ref,
+    () => ({
+      openFile
+    }),
+    [panes, activePaneId]
+  );
+
+  function removePane(paneId) {
+    setPanes((current) => {
+      if (current.length <= 1) {
+        return current;
+      }
+
+      const nextPanes = current.filter((pane) => pane.id !== paneId);
+      if (nextPanes.length === 0) {
+        return current;
+      }
+
+      if (activePaneId === paneId) {
+        setActivePaneId(nextPanes[0].id);
+      }
+
+      return nextPanes;
+    });
+  }
+
   function activatePane(paneId) {
     setActivePaneId(paneId);
   }
 
+  function resetTabDragState() {
+    if (dragRafRef.current) {
+      cancelAnimationFrame(dragRafRef.current);
+      dragRafRef.current = 0;
+    }
+    setDraggingTab(null);
+    setDragOverPaneId("");
+    setDragOverIndex(null);
+    setEdgeDropPosition(null);
+    edgeDropPositionRef.current = null;
+  }
+
+  function clampSplitRatio(value) {
+    return Math.min(0.8, Math.max(0.2, value));
+  }
+
+  function updateSplitRatioFromPointer(clientX) {
+    const rect = containerRef.current?.getBoundingClientRect();
+    if (!rect || rect.width <= 0) {
+      return;
+    }
+
+    const nextRatio = clampSplitRatio((clientX - rect.left) / rect.width);
+    resizeRatioRef.current = nextRatio;
+
+    if (resizeRafRef.current) {
+      cancelAnimationFrame(resizeRafRef.current);
+    }
+
+    resizeRafRef.current = requestAnimationFrame(() => {
+      setSplitRatio(resizeRatioRef.current);
+    });
+  }
+
   function splitPane(paneId, direction = "right", tabPath = "") {
+    let nextTargetPaneId = "";
     setPanes((current) => {
       if (current.length >= 2) {
         return current;
@@ -1794,6 +1854,7 @@ export default function PaneContainer({ selectedFile, onSelectFile, onSaved, mar
 
       const sourceTab = sourcePane.tabs.find((tab) => tab.path === sourceTabPath);
       const targetPaneId = `pane-${paneIdRef.current++}`;
+      nextTargetPaneId = targetPaneId;
       const nextPane = {
         id: targetPaneId,
         tabs: sourceTab ? [{ ...sourceTab }] : [],
@@ -1809,98 +1870,341 @@ export default function PaneContainer({ selectedFile, onSelectFile, onSaved, mar
             : sourcePane.activeTabPath
       };
 
-      setActivePaneId(targetPaneId);
-      return direction === "right" ? [nextSourcePane, nextPane] : [nextSourcePane, nextPane];
+      const nextPanes = direction === "right" ? [nextSourcePane, nextPane] : [nextSourcePane, nextPane];
+      return nextPanes.filter((pane) => pane.tabs.length > 0 || pane.id === targetPaneId);
     });
-  }
 
-  function moveTabToPane(tabPath, sourcePaneId, targetPaneId) {
-    if (!tabPath || sourcePaneId === targetPaneId) {
-      return;
+    if (nextTargetPaneId) {
+      setActivePaneId(nextTargetPaneId);
     }
-
-    setPanes((current) => {
-      const sourcePane = current.find((pane) => pane.id === sourcePaneId);
-      const targetPane = current.find((pane) => pane.id === targetPaneId);
-      if (!sourcePane || !targetPane) {
-        return current;
-      }
-
-      const sourceTab = sourcePane.tabs.find((tab) => tab.path === tabPath);
-      if (!sourceTab) {
-        return current;
-      }
-
-      const nextSourceTabs = sourcePane.tabs.filter((tab) => tab.path !== tabPath);
-      const nextTargetTabs = targetPane.tabs.some((tab) => tab.path === tabPath)
-        ? targetPane.tabs
-        : [...targetPane.tabs, { ...sourceTab }];
-
-      return current.map((pane) => {
-        if (pane.id === sourcePaneId) {
-          return {
-            ...pane,
-            tabs: nextSourceTabs,
-            activeTabPath:
-              pane.activeTabPath === tabPath ? nextSourceTabs[0]?.path || "" : pane.activeTabPath
-          };
-        }
-        if (pane.id === targetPaneId) {
-          return {
-            ...pane,
-            tabs: nextTargetTabs,
-            activeTabPath: tabPath
-          };
-        }
-        return pane;
-      });
-    });
-    setActivePaneId(targetPaneId);
   }
 
   function updatePaneFromPaneComponent(paneId, updater) {
     updatePane(paneId, typeof updater === "function" ? updater : () => updater);
   }
 
+  function insertTabAt(tabs, tab, index) {
+    const nextTabs = [...tabs];
+    const safeIndex = Math.max(0, Math.min(index, nextTabs.length));
+    nextTabs.splice(safeIndex, 0, tab);
+    return nextTabs;
+  }
+
+  function getPaneTabsLength(paneId) {
+    return panes.find((pane) => pane.id === paneId)?.tabs.length || 0;
+  }
+
+  function moveDraggingTabToPane({ toPaneId, insertIndex, copy = false }) {
+    if (!draggingTab?.path || !draggingTab?.fromPaneId || !toPaneId) {
+      return;
+    }
+
+    setPanes((current) => {
+      const sourcePane = current.find((pane) => pane.id === draggingTab.fromPaneId);
+      const targetPane = current.find((pane) => pane.id === toPaneId);
+      if (!sourcePane || !targetPane) {
+        return current;
+      }
+
+      const sourceTab = sourcePane.tabs.find((tab) => tab.path === draggingTab.path);
+      if (!sourceTab) {
+        return current;
+      }
+
+      const samePane = sourcePane.id === targetPane.id;
+      const sourceIndex = sourcePane.tabs.findIndex((tab) => tab.path === draggingTab.path);
+      const shouldCopy = copy && !samePane;
+      const moveTab = { ...sourceTab };
+
+      let nextSourceTabs = sourcePane.tabs;
+      let nextTargetTabs = targetPane.tabs;
+
+      if (!shouldCopy) {
+        nextSourceTabs = sourcePane.tabs.filter((tab) => tab.path !== draggingTab.path);
+      }
+
+      if (samePane) {
+        const remaining = sourcePane.tabs.filter((tab) => tab.path !== draggingTab.path);
+        const adjustedIndex = insertIndex > sourceIndex ? insertIndex - 1 : insertIndex;
+        const targetPosition = Math.max(0, Math.min(adjustedIndex, remaining.length));
+        if (targetPosition === sourceIndex || targetPosition === sourceIndex + 1) {
+          return current;
+        }
+        nextTargetTabs = insertTabAt(remaining, moveTab, adjustedIndex);
+      } else {
+        const targetPosition = Math.max(0, Math.min(insertIndex, targetPane.tabs.length));
+        const dedupedTarget = targetPane.tabs.filter((tab) => tab.path !== draggingTab.path);
+        nextTargetTabs = insertTabAt(dedupedTarget, moveTab, targetPosition);
+      }
+
+      const nextPanes = current
+        .map((pane) => {
+          if (pane.id === sourcePane.id) {
+            return {
+              ...pane,
+              tabs: nextSourceTabs,
+              activeTabPath:
+                pane.activeTabPath === draggingTab.path ? nextSourceTabs[0]?.path || "" : pane.activeTabPath
+            };
+          }
+          if (pane.id === targetPane.id) {
+            return {
+              ...pane,
+              tabs: nextTargetTabs,
+              activeTabPath: draggingTab.path
+            };
+          }
+          return pane;
+        })
+        .filter((pane) => pane.id !== sourcePane.id || samePane || nextSourceTabs.length > 0);
+
+      if (!samePane && nextSourceTabs.length === 0 && activePaneId === sourcePane.id) {
+        setActivePaneId(targetPane.id);
+      }
+
+      return nextPanes;
+    });
+
+    setActivePaneId(toPaneId);
+  }
+
+  function handleTabDragStart(paneId, tabPath, event) {
+    if (event.button !== 0) {
+      return;
+    }
+
+    setDraggingTab({
+      path: tabPath,
+      fromPaneId: paneId,
+      copy: Boolean(event.ctrlKey || event.metaKey)
+    });
+    setDragOverPaneId(paneId);
+    setDragOverIndex(getPaneTabsLength(paneId));
+    setEdgeDropPosition(null);
+    edgeDropPositionRef.current = null;
+  }
+
+  function getEdgeDropPositionFromEvent(event) {
+    const rect = event.currentTarget.getBoundingClientRect();
+    if (!rect.width || !rect.height) {
+      return null;
+    }
+
+    const xRatio = (event.clientX - rect.left) / rect.width;
+    const yRatio = (event.clientY - rect.top) / rect.height;
+    if (xRatio <= 0.2) {
+      return "left";
+    }
+    if (xRatio >= 0.8) {
+      return "right";
+    }
+    if (yRatio <= 0.2) {
+      return "top";
+    }
+    if (yRatio >= 0.8) {
+      return "bottom";
+    }
+    return null;
+  }
+
+  function handleTabDragOver(paneId, tabPath, tabIndex, event) {
+    if (!draggingTab?.path) {
+      return;
+    }
+
+    event.preventDefault();
+
+    const rect = event.currentTarget.getBoundingClientRect();
+    const nextIndex = event.clientX < rect.left + rect.width / 2 ? tabIndex : tabIndex + 1;
+
+    if (dragRafRef.current) {
+      cancelAnimationFrame(dragRafRef.current);
+    }
+
+    dragRafRef.current = requestAnimationFrame(() => {
+      setDragOverPaneId(paneId);
+      setDragOverIndex(nextIndex);
+      setEdgeDropPosition(null);
+      edgeDropPositionRef.current = null;
+    });
+  }
+
+  function handlePaneDragOver(paneId, event) {
+    if (!draggingTab?.path) {
+      return;
+    }
+
+    event.preventDefault();
+
+    const nextEdgeDropPosition = getEdgeDropPositionFromEvent(event);
+
+    if (dragRafRef.current) {
+      cancelAnimationFrame(dragRafRef.current);
+    }
+
+    dragRafRef.current = requestAnimationFrame(() => {
+      setDragOverPaneId(paneId);
+      setDragOverIndex(getPaneTabsLength(paneId));
+      setEdgeDropPosition(nextEdgeDropPosition);
+      edgeDropPositionRef.current = nextEdgeDropPosition;
+    });
+  }
+
+  function handleTabDrop(paneId, tabPath, tabIndex, event) {
+    if (!draggingTab?.path) {
+      return;
+    }
+
+    event.preventDefault();
+    const nextEdgeDropPosition =
+      edgeDropPositionRef.current || getEdgeDropPositionFromEvent(event) || edgeDropPosition;
+    if (nextEdgeDropPosition) {
+      splitPane(paneId, nextEdgeDropPosition === "bottom" ? "bottom" : "right", draggingTab.path);
+      resetTabDragState();
+      return;
+    }
+    const insertIndex = dragOverPaneId === paneId && dragOverIndex !== null ? dragOverIndex : tabIndex;
+    moveDraggingTabToPane({
+      toPaneId: paneId,
+      insertIndex,
+      copy: draggingTab.copy
+    });
+    resetTabDragState();
+  }
+
+  function handlePaneDrop(paneId, event) {
+    if (!draggingTab?.path) {
+      return;
+    }
+
+    event.preventDefault();
+    const nextEdgeDropPosition =
+      edgeDropPositionRef.current || getEdgeDropPositionFromEvent(event) || edgeDropPosition;
+    if (nextEdgeDropPosition) {
+      splitPane(paneId, nextEdgeDropPosition === "bottom" ? "bottom" : "right", draggingTab.path);
+      resetTabDragState();
+      return;
+    }
+    moveDraggingTabToPane({
+      toPaneId: paneId,
+      insertIndex: dragOverPaneId === paneId && dragOverIndex !== null ? dragOverIndex : getPaneTabsLength(paneId),
+      copy: draggingTab.copy
+    });
+    resetTabDragState();
+  }
+
+  function handlePaneDragLeave(paneId, event) {
+    if (event.relatedTarget && event.currentTarget.contains(event.relatedTarget)) {
+      return;
+    }
+
+    if (dragOverPaneId === paneId) {
+      setDragOverPaneId("");
+      setDragOverIndex(null);
+      setEdgeDropPosition(null);
+    }
+  }
+
+  function handleTabDragEnd() {
+    resetTabDragState();
+  }
+
   useEffect(() => {
-    if (!selectedFile?.path) {
-      return;
+    function handlePointerMove(event) {
+      if (!resizingRef.current) {
+        return;
+      }
+
+      event.preventDefault();
+      updateSplitRatioFromPointer(event.clientX);
     }
 
-    const activePane = panes.find((pane) => pane.id === activePaneId) || panes[0];
-    if (!activePane) {
-      return;
+    function handlePointerUp() {
+      if (!resizingRef.current) {
+        return;
+      }
+
+      resizingRef.current = false;
+      if (resizeRafRef.current) {
+        cancelAnimationFrame(resizeRafRef.current);
+        resizeRafRef.current = 0;
+      }
     }
 
-    updatePane(activePane.id, (pane) => ({
-      ...pane,
-      tabs: pane.tabs.some((tab) => tab.path === selectedFile.path)
-        ? pane.tabs
-        : [...pane.tabs, { path: selectedFile.path, name: selectedFile.name, isDirty: false }],
-      activeTabPath: selectedFile.path
-    }));
-  }, [selectedFile]);
+    window.addEventListener("pointermove", handlePointerMove, { passive: false });
+    window.addEventListener("pointerup", handlePointerUp);
+    window.addEventListener("pointercancel", handlePointerUp);
+
+    return () => {
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", handlePointerUp);
+      window.removeEventListener("pointercancel", handlePointerUp);
+    };
+  }, []);
 
   function handlePaneUpdate(paneId, updater) {
     updatePane(paneId, updater);
   }
 
   return (
-    <div className="pane-container">
-      {panes.map((pane) => (
-        <Pane
-          key={pane.id}
-          pane={pane}
-          selectedFile={pane.id === activePaneId ? selectedFile : null}
-          onSelectFile={onSelectFile}
-          onSaved={onSaved}
-          markdownHeadingColors={markdownHeadingColors}
-          onUpdatePane={(updater) => handlePaneUpdate(pane.id, updater)}
-          onSplitRight={(paneId, tabPath) => splitPane(paneId, "right", tabPath)}
-          onPaneFocus={() => setActivePaneId(pane.id)}
-          onMoveTabToPane={(tabPath, targetPaneId) => moveTabToPane(tabPath, pane.id, targetPaneId)}
+    <div
+      ref={containerRef}
+      className="pane-container"
+      style={{ "--split-ratio": String(splitRatio) }}
+    >
+      {panes.map((pane, index) => {
+        const isSplit = panes.length === 2;
+        const paneStyle = isSplit
+          ? index === 0
+            ? { flex: "0 0 auto", width: "calc((100% - 4px) * var(--split-ratio))" }
+            : { flex: "0 0 auto", width: "calc((100% - 4px) * (1 - var(--split-ratio)))" }
+          : undefined;
+
+        return (
+          <div key={pane.id} className="pane-shell" style={paneStyle}>
+            <Pane
+              pane={pane}
+              isActivePane={pane.id === activePaneId}
+              selectedFile={pane.id === activePaneId ? selectedFile : null}
+              onSelectFile={onSelectFile}
+              onSaved={onSaved}
+              markdownHeadingColors={markdownHeadingColors}
+              onUpdatePane={(updater) => handlePaneUpdate(pane.id, updater)}
+              onSplitRight={(paneId, tabPath) => splitPane(paneId, "right", tabPath)}
+              onPaneFocus={() => setActivePaneId(pane.id)}
+              draggingTab={draggingTab}
+              dragOverPaneId={dragOverPaneId}
+              dragOverIndex={dragOverIndex}
+              edgeDropPosition={edgeDropPosition}
+              onTabDragStart={handleTabDragStart}
+              onTabDragOver={handleTabDragOver}
+              onTabDrop={handleTabDrop}
+              onTabDragEnd={handleTabDragEnd}
+              onPaneDragOver={handlePaneDragOver}
+              onPaneDrop={handlePaneDrop}
+              onPaneDragLeave={handlePaneDragLeave}
+              onPaneEmpty={removePane}
+            />
+          </div>
+        );
+      })}
+      {panes.length === 2 ? (
+        <div
+          className="pane-divider"
+          role="separator"
+          aria-orientation="vertical"
+          onMouseDown={(event) => {
+            if (event.button !== 0) {
+              return;
+            }
+            event.preventDefault();
+            resizingRef.current = true;
+            updateSplitRatioFromPointer(event.clientX);
+          }}
         />
-      ))}
+      ) : null}
     </div>
   );
-}
+});
+
+export default PaneContainer;

@@ -13,6 +13,10 @@ import {
   DEFAULT_WEEKLY_RESET_MONTH,
   DEFAULT_WEEKLY_RESET_DAY,
   DEFAULT_WEEKLY_RESET_TIME,
+  calculateUsage,
+  estimateCodexTokens,
+  getCurrentLimit5hWindowStart,
+  getCurrentWeeklyWindowStart,
   normalizeCodexLimitSettings,
   normalizeHexColor,
   normalizeHexColorList,
@@ -34,6 +38,15 @@ const DEFAULT_CODEX_MODELS = [
   { id: "gpt-5.2", factor: 0.9 }
 ];
 const DEFAULT_MARKDOWN_HEADING_COLORS = ["#8fd3ff", "#7bdc6a", "#f5c542", "#c18cff", "#e88787", "#9dd6c4"];
+const CONTENT_SECURITY_POLICY = [
+  "default-src 'self'",
+  "script-src 'self' 'unsafe-inline'",
+  "style-src 'self' 'unsafe-inline'",
+  "img-src 'self' file: data: blob:",
+  "font-src 'self' data:",
+  "connect-src 'self' ws: http://127.0.0.1:5173 http://localhost:5173",
+  "worker-src 'self' blob:"
+].join("; ");
 
 const DEFAULT_LIMITS_SETTINGS = {
   limit5hResetTime: DEFAULT_LIMIT5H_RESET_TIME,
@@ -97,6 +110,14 @@ function createWindow() {
   });
   win.webContents.on("did-finish-load", () => {
     flushPendingExternalDropPaths();
+  });
+  win.webContents.session.webRequest.onHeadersReceived((details, callback) => {
+    callback({
+      responseHeaders: {
+        ...details.responseHeaders,
+        "Content-Security-Policy": [CONTENT_SECURITY_POLICY]
+      }
+    });
   });
 
   if (isDev) {
@@ -224,7 +245,7 @@ async function convertHeicToJpegUrl(filePath) {
   return pending;
 }
 
-async function readCodexHistory() {
+async function readCodexHistory(settings = null) {
   const historyPath = path.join(os.homedir(), ".codex", "history.jsonl");
   console.log("[codex:stats] historyPath =", historyPath);
   try {
@@ -232,12 +253,38 @@ async function readCodexHistory() {
     const lines = raw.split("\n").filter(Boolean);
     const sessionIds = new Set();
     const requestCount = lines.length;
+    const currentTime = new Date();
+    const limit5hWindowStart = settings
+      ? getCurrentLimit5hWindowStart(currentTime, settings.limit5hResetTime)
+      : null;
+    const weeklyWindowStart = settings
+      ? getCurrentWeeklyWindowStart(
+          currentTime,
+          settings.weeklyResetMonth,
+          settings.weeklyResetDay,
+          settings.weeklyResetTime
+        )
+      : null;
+    let tokenEstimate = 0;
+    let tokenEstimate5h = 0;
+    let tokenEstimateWeek = 0;
 
     for (const line of lines) {
       try {
         const entry = JSON.parse(line);
         if (entry.session_id || entry.sessionId) {
           sessionIds.add(entry.session_id || entry.sessionId);
+        }
+        const tokenCount = estimateCodexTokens(entry.text || "");
+        tokenEstimate += tokenCount;
+        const entryTime = new Date(Number(entry.ts) * 1000);
+        if (settings && !Number.isNaN(entryTime.getTime())) {
+          if (entryTime >= limit5hWindowStart) {
+            tokenEstimate5h += tokenCount;
+          }
+          if (entryTime >= weeklyWindowStart) {
+            tokenEstimateWeek += tokenCount;
+          }
         }
       } catch {
         continue;
@@ -248,7 +295,9 @@ async function readCodexHistory() {
       historyPath,
       requestCount,
       sessionCount: sessionIds.size,
-      tokenEstimate: requestCount * 120
+      tokenEstimate,
+      tokenEstimate5h,
+      tokenEstimateWeek
     };
   } catch (error) {
     return {
@@ -256,6 +305,8 @@ async function readCodexHistory() {
       requestCount: 0,
       sessionCount: 0,
       tokenEstimate: 0,
+      tokenEstimate5h: 0,
+      tokenEstimateWeek: 0,
       error: error.message
     };
   }
@@ -603,8 +654,6 @@ async function readSettings() {
         ? Array.from({ length: 6 }, () => normalizeHexColor(parsed.markdownHeadingColor, defaultSettings.markdownHeadingColors[0]))
         : defaultSettings.markdownHeadingColors;
     const markdownHeadingColor = markdownHeadingColors[0];
-    const codexHistory = await readCodexHistory();
-    const currentTokenEstimate = Number(codexHistory.tokenEstimate) || 0;
     const codexLimitSettings = normalizeCodexLimitSettings(
       {
         limit5hResetTime: parsed.limit5hResetTime,
@@ -616,13 +665,15 @@ async function readSettings() {
       },
       new Date()
     );
+    const codexHistory = await readCodexHistory(codexLimitSettings);
+    const currentTokenEstimate = Number(codexHistory.tokenEstimate) || 0;
     const limit5hBaselineTokenEstimate = Object.hasOwn(parsed, "limit5hBaselineTokenEstimate")
-      ? Number(parsed.limit5hBaselineTokenEstimate) >= 0
+      ? Number.isFinite(Number(parsed.limit5hBaselineTokenEstimate))
         ? Number(parsed.limit5hBaselineTokenEstimate)
         : currentTokenEstimate
       : currentTokenEstimate;
     const weeklyBaselineTokenEstimate = Object.hasOwn(parsed, "weeklyBaselineTokenEstimate")
-      ? Number(parsed.weeklyBaselineTokenEstimate) >= 0
+      ? Number.isFinite(Number(parsed.weeklyBaselineTokenEstimate))
         ? Number(parsed.weeklyBaselineTokenEstimate)
         : currentTokenEstimate
       : currentTokenEstimate;
@@ -630,7 +681,6 @@ async function readSettings() {
       ? selectedLaunchModel
       : codexModels[0].id;
     const normalizedUsageModel = modelIds.includes(usageModel) ? usageModel : codexModels[0].id;
-
     try {
       const stats = await fs.stat(initialDirectory);
       if (!stats.isDirectory()) {
@@ -757,11 +807,11 @@ async function saveSettings(settings) {
     weeklyNextResetAt:
       typeof settings.weeklyNextResetAt === "string" ? settings.weeklyNextResetAt : current.weeklyNextResetAt,
     limit5hBaselineTokenEstimate:
-      Number(settings.limit5hBaselineTokenEstimate) >= 0
+      Number.isFinite(Number(settings.limit5hBaselineTokenEstimate))
         ? Number(settings.limit5hBaselineTokenEstimate)
         : current.limit5hBaselineTokenEstimate,
     weeklyBaselineTokenEstimate:
-      Number(settings.weeklyBaselineTokenEstimate) >= 0
+      Number.isFinite(Number(settings.weeklyBaselineTokenEstimate))
         ? Number(settings.weeklyBaselineTokenEstimate)
         : current.weeklyBaselineTokenEstimate
   };
@@ -869,7 +919,8 @@ ipcMain.handle("system:usage", async () => {
 
 ipcMain.handle("codex:stats", async () => {
   console.log("[codex:stats] invoked");
-  return readCodexHistory();
+  const settings = await readSettings();
+  return readCodexHistory(settings);
 });
 ipcMain.handle("settings:get", async () => readSettings());
 ipcMain.handle("settings:save", async (_event, settings) => saveSettings(settings));

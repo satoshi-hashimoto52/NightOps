@@ -118,6 +118,7 @@ textarea {
 .window-path-area {
   position: absolute;
   left: 50%;
+  top: 0;
   transform: translateX(-50%);
   display: flex;
   align-items: center;
@@ -150,6 +151,34 @@ textarea {
   border-color: rgba(47, 209, 122, 0.95);
   background: rgba(20, 46, 30, 0.84);
   color: #f4fff8;
+}
+
+.window-browse-menu {
+  position: fixed;
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 10px;
+  background: rgba(18, 22, 28, 0.96);
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.38);
+  min-width: 180px;
+}
+
+.window-browse-menu-item {
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(40, 45, 53, 0.9);
+  color: var(--text-main);
+  border-radius: 8px;
+  padding: 8px 10px;
+  text-align: left;
+}
+
+.window-browse-menu-item:hover:not(:disabled) {
+  border-color: rgba(47, 209, 122, 0.35);
+  background: rgba(20, 46, 30, 0.95);
 }
 
 .window-launch-button {
@@ -940,7 +969,7 @@ textarea {
   display: flex;
   flex-direction: column;
   padding: 8px 16px 16px;
-  gap: 8px;
+  gap: 2px;
   --preview-font-scale: 1;
 }
 
@@ -950,11 +979,75 @@ textarea {
   min-width: 0;
   display: flex;
   flex-direction: row;
-  gap: 8px;
+  gap: 0;
+  overflow: hidden;
 }
 
-.pane-container > .preview-shell {
+.pane-shell {
+  flex: 1 1 auto;
   min-width: 0;
+  min-height: 0;
+  display: flex;
+  overflow: hidden;
+}
+
+.pane-shell > .preview-shell {
+  flex: 1;
+  min-width: 0;
+}
+
+.preview-shell.drag-over {
+  background: rgba(255, 255, 255, 0.03);
+  box-shadow: inset 0 0 0 1px rgba(140, 210, 255, 0.18);
+}
+
+.pane-edge-preview {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 120, 255, 0.12);
+  pointer-events: none;
+  z-index: 1;
+}
+
+.pane-edge-preview-right {
+  inset: 0 0 0 50%;
+}
+
+.pane-edge-preview-bottom {
+  inset: 50% 0 0;
+}
+
+.pane-edge-preview-left {
+  inset: 0 50% 0 0;
+}
+
+.pane-edge-preview-top {
+  inset: 0 0 50%;
+}
+
+.pane-divider {
+  width: 4px;
+  flex: 0 0 4px;
+  cursor: col-resize;
+  background: transparent;
+  position: relative;
+  z-index: 10;
+}
+
+.pane-divider::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  left: 1px;
+  right: 1px;
+  border-radius: 999px;
+  background: transparent;
+  transition: background 0.12s ease;
+}
+
+.pane-divider:hover::before,
+.pane-divider:active::before {
+  background: rgba(255, 255, 255, 0.16);
 }
 
 .preview-tabs {
@@ -962,7 +1055,7 @@ textarea {
   align-items: stretch;
   gap: 4px;
   overflow: auto hidden;
-  padding-bottom: 2px;
+  padding-bottom: 0;
   scrollbar-width: thin;
 }
 
@@ -977,9 +1070,9 @@ textarea {
 
 .preview-tab {
   position: relative;
-  min-width: 120px;
-  max-width: 220px;
-  flex: 0 1 180px;
+  min-width: 80px;
+  max-width: 180px;
+  flex: 0 1 auto;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -993,11 +1086,17 @@ textarea {
   line-height: 1;
   white-space: nowrap;
   cursor: grab;
+  overflow: visible;
   transition:
     background 0.15s ease,
     color 0.15s ease,
     border-color 0.15s ease,
     transform 0.15s ease;
+}
+
+.preview-tab.single-tab {
+  flex: 1 1 auto;
+  max-width: none;
 }
 
 .preview-tab:active {
@@ -1010,11 +1109,16 @@ textarea {
 }
 
 .preview-tab.active {
+  z-index: 2;
   color: var(--text-main);
   background: rgba(28, 33, 43, 0.94);
   border-color: rgba(52, 58, 66, 0.9);
   border-bottom-color: rgba(28, 33, 43, 0.94);
   transform: translateY(1px);
+}
+
+.preview-tab.has-actions {
+  padding-right: 68px;
 }
 
 .preview-tab.dragging {
@@ -1042,6 +1146,7 @@ textarea {
 }
 
 .preview-tab-name {
+  flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1166,11 +1271,53 @@ textarea {
   margin-left: auto;
 }
 
+.preview-active-tab-actions {
+  position: absolute;
+  top: 50%;
+  right: 4px;
+  transform: translateY(-50%);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 0 auto;
+  z-index: 3;
+  pointer-events: auto;
+}
+
+.preview-active-tab-actions .preview-mode-button,
+.preview-active-tab-actions .save-button {
+  height: 22px;
+  padding: 0 8px;
+  border-radius: 6px;
+  font-size: 10px;
+  line-height: 1;
+}
+
+.preview-active-tab-actions .preview-mode-button.action-edit {
+  background: rgba(28, 52, 78, 0.8);
+  border-color: rgba(104, 172, 255, 0.55);
+  color: #d8ebff;
+}
+
+.preview-active-tab-actions .preview-mode-button.action-preview {
+  background: rgba(54, 44, 20, 0.78);
+  border-color: rgba(245, 197, 66, 0.5);
+  color: #fff4d4;
+}
+
+.preview-active-tab-actions .save-button.action-save {
+  background: rgba(20, 46, 30, 0.82);
+  border-color: rgba(79, 209, 165, 0.6);
+  color: #e9fff4;
+}
+
 .preview-text-stage {
   flex: 1;
   min-height: 0;
   display: flex;
   flex-direction: column;
+  position: relative;
+  padding-top: 0;
 }
 
 .preview-actions button,
@@ -1704,6 +1851,9 @@ textarea {
   display: flex;
   flex-direction: column;
   font-size: 11px;
+  background: rgba(58, 62, 68, 0.72);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  backdrop-filter: blur(calc(var(--surface-blur, 0) * 1px)) saturate(1.15);
 }
 
 .settings-header {
