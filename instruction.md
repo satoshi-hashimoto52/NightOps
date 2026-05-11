@@ -1,144 +1,92 @@
-Outlineとテキスト表示領域の間をドラッグで伸縮できるようにしてください。
-既存のPane分割とは独立して実装すること。
+■ ① right を完全削除（最重要）
+
+.outline-divider から以下を削除：
+
+right: 0;
+right: any;
+
+※ 1つでも残っていたら絶対に右に張り付きます
 
 ---
 
-【目的】
-- Outline幅を自由に調整
-- 長い構造や本文を見やすくする
-- IDE相当の操作性にする
+■ ② left を強制適用（JSXで）
+
+dividerに直接：
+
+style={{
+  left: `${outlineWidth}px`
+}}
 
 ---
 
-■ ① レイアウト構造変更
+■ ③ transform があれば削除
 
-現在：
+NG：
 
-[Outline][Text]
-
-↓
-
-変更：
-
-[Outline][Divider][Text]
+transform: translateX(...)
+transform: translate(...)
 
 ---
 
-■ ② 状態追加
+■ ④ 親の幅を確認（重要）
 
-const [outlineWidth, setOutlineWidth] = useState(240)
+markdown-preview-layout に：
 
----
-
-■ ③ 幅制御
-
-Outline：
-
-width: outlineWidth px
-flex: 0 0 auto
-
-Text：
-
-flex: 1
+width: 100%;
 
 ---
 
-■ ④ Divider追加
+■ ⑤ asideのwidthと一致させる
 
-<div className="outline-divider" />
+aside：
 
----
+style={{
+  width: `${outlineWidth}px`
+}}
 
-■ ⑤ ドラッグ処理
+divider：
 
-mousedown：
+style={{
+  left: `${outlineWidth}px`
+}}
 
-isResizing = true
-
-pointermove：
-
-newWidth = mouseX - containerLeft
-
-setOutlineWidth(newWidth)
+👉 この2つが完全一致
 
 ---
 
-■ ⑥ 制限（重要）
+■ ⑥ position確認
 
-outlineWidth の範囲：
-
-min: 160px
-max: 600px
-
----
-
-■ ⑦ pointerイベント（重要）
-
-window にバインド：
-
-pointermove
-pointerup
-
----
-
-■ ⑧ CSS
-
-.outline-divider {
-  width: 4px;
-  cursor: col-resize;
-  background: transparent;
+.layout {
+  position: relative;
 }
 
-.outline-divider:hover {
-  background: rgba(255,255,255,0.1);
+.divider {
+  position: absolute;
 }
 
 ---
 
-■ ⑨ スクロールとの分離
+■ ⑦ 最終チェック（必須）
 
-- Outline は独立スクロール
-- Text も独立スクロール
-
----
-
-■ ⑩ 保存（任意）
-
-localStorage に保存：
-
-outlineWidth
+console.log({
+  outlineWidth,
+  dividerLeft: divider.style.left
+})
 
 ---
 
-■ ⑪ Pane分割との独立性
+■ ⑧ 強制テスト
 
-- Pane分割の splitRatio と混ぜない
-- 各Pane内で独立管理
+一時的に：
 
----
+divider.style.left = "200px";
 
-■ ⑫ パフォーマンス
-
-- requestAnimationFrame 推奨
-- setState連打防止
-
----
-
-■ 禁止
-
-- flex:1 のまま width変更
-- transformで位置調整
-- 親レイアウト変更
+👉 動けばOK（JSは正しい）
+👉 動かなければCSSが勝っている
 
 ---
 
 ■ ゴール
 
-- Outlineと本文の境界をドラッグで調整可能
-- 他の分割（Pane）と干渉しない
-
----
-
-■ 出力
-
-- 変更箇所のみ提示
+- dividerが緑線（outline右端）に一致
+- ドラッグで連動して動く

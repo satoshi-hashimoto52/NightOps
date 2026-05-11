@@ -1,4 +1,4 @@
-import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
+import { Fragment, forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
 import hljs from "highlight.js/lib/core";
 import javascript from "highlight.js/lib/languages/javascript";
 import json from "highlight.js/lib/languages/json";
@@ -734,7 +734,10 @@ function Pane({
   const previewShellRef = useRef(null);
   const pdfWrapRef = useRef(null);
   const pdfPageUrlsRef = useRef([]);
-  const markdownOutlineLayoutRef = useRef(null);
+  const markdownPreviewOutlineLayoutRef = useRef(null);
+  const markdownSplitOutlineLayoutRef = useRef(null);
+  const markdownPreviewOutlineDividerRef = useRef(null);
+  const markdownSplitOutlineDividerRef = useRef(null);
   const editorGutterRef = useRef(null);
   const markdownSplitRef = useRef(null);
   const markdownSplitDragRef = useRef({ dragging: false });
@@ -1910,13 +1913,6 @@ function Pane({
         >
           {isPreviewCollapsed ? "⊞" : "⊟"}
         </button>
-        <CopyButton
-          className="markdown-outline-copy"
-          onCopy={() => handleCopyMarkdownSection(heading.id)}
-          copyLabel={`Copy section for ${heading.text}`}
-          copiedLabel={`Section copied for ${heading.text}`}
-          title="Copy section"
-        />
       </div>
     );
   }
@@ -1942,7 +1938,8 @@ function Pane({
       return;
     }
 
-    const layout = markdownOutlineLayoutRef.current;
+    const divider = event.currentTarget;
+    const layout = divider?.parentElement;
     if (!layout) {
       return;
     }
@@ -1958,7 +1955,7 @@ function Pane({
 
     event.preventDefault();
     event.stopPropagation();
-    event.currentTarget.setPointerCapture?.(event.pointerId);
+    divider.setPointerCapture?.(event.pointerId);
   }
 
   function renderMarkdownListNodes(nodes, keyPrefix = "list") {
@@ -2500,46 +2497,40 @@ function Pane({
               {mode === "preview" ? (
                 isMarkdown ? (
                   <div
-                    ref={markdownOutlineLayoutRef}
+                    ref={markdownPreviewOutlineLayoutRef}
                     className={`markdown-preview-layout${showMarkdownOutlinePane ? "" : " markdown-outline-hidden"}`}
-                    style={
-                      showMarkdownOutlinePane
-                        ? { gridTemplateColumns: `${outlineWidth}px 4px minmax(0, 1fr)` }
-                        : { gridTemplateColumns: "minmax(0, 1fr)" }
-                    }
+                    style={showMarkdownOutlinePane ? { position: "relative" } : { position: "relative" }}
                   >
                     {showMarkdownOutlinePane ? (
-                      <>
-                        <aside
-                          className="markdown-outline"
-                          aria-label="Markdown outline"
-                          style={{ width: `${outlineWidth}px`, flex: "0 0 auto" }}
-                        >
-                          <div className="markdown-outline-title">Outline</div>
-                          {markdownDocument.headings.length > 0 ? (
-                            <div className="markdown-outline-list">
-                              {renderMarkdownOutlineNodes(markdownOutlineTree)}
-                            </div>
-                          ) : (
-                            <div className="markdown-outline-empty">No headings</div>
-                          )}
-                        </aside>
-                        <div
-                          className="outline-divider"
-                          role="separator"
-                          aria-orientation="vertical"
-                          aria-label="Resize outline panel"
-                          onPointerDown={handleMarkdownOutlineResizeStart}
-                        />
-                      </>
+                      <aside className="markdown-outline outline" aria-label="Markdown outline" style={{ width: `${outlineWidth}px` }}>
+                        <div className="markdown-outline-title">Outline</div>
+                        {markdownDocument.headings.length > 0 ? (
+                          <div className="markdown-outline-list">
+                            {renderMarkdownOutlineNodes(markdownOutlineTree)}
+                          </div>
+                        ) : (
+                          <div className="markdown-outline-empty">No headings</div>
+                        )}
+                      </aside>
                     ) : null}
                     <div
-                      className={`code-preview markdown-preview markdown-preview-scroll${showMarkdownOutlinePane ? "" : " markdown-preview-fullwidth"}`}
+                      className={`code-preview markdown-preview markdown-preview-scroll markdown-main${showMarkdownOutlinePane ? "" : " markdown-preview-fullwidth"}`}
                       ref={previewScrollRef}
                       onScroll={handlePreviewScroll}
                     >
                       {renderMarkdownBlocks()}
                     </div>
+                    {showMarkdownOutlinePane ? (
+                      <div
+                        ref={markdownPreviewOutlineDividerRef}
+                        className="outline-divider"
+                        role="separator"
+                        aria-orientation="vertical"
+                        aria-label="Resize outline panel"
+                        style={{ left: `${outlineWidth}px` }}
+                        onPointerDown={handleMarkdownOutlineResizeStart}
+                      />
+                    ) : null}
                   </div>
                 ) : (
                   <pre className="code-preview" ref={previewScrollRef} onScroll={handlePreviewScroll}>
@@ -2591,46 +2582,40 @@ function Pane({
                     />
                     <div className="markdown-edit-split-pane markdown-edit-split-pane-preview">
                       <div
-                        ref={markdownOutlineLayoutRef}
+                        ref={markdownSplitOutlineLayoutRef}
                         className={`markdown-preview-layout${showMarkdownOutlinePane ? "" : " markdown-outline-hidden"}`}
-                        style={
-                          showMarkdownOutlinePane
-                            ? { gridTemplateColumns: `${outlineWidth}px 4px minmax(0, 1fr)` }
-                            : { gridTemplateColumns: "minmax(0, 1fr)" }
-                        }
+                        style={showMarkdownOutlinePane ? { position: "relative" } : { position: "relative" }}
                       >
                         {showMarkdownOutlinePane ? (
-                          <>
-                            <aside
-                              className="markdown-outline"
-                              aria-label="Markdown outline"
-                              style={{ width: `${outlineWidth}px`, flex: "0 0 auto" }}
-                            >
-                              <div className="markdown-outline-title">Outline</div>
-                              {markdownDocument.headings.length > 0 ? (
-                                <div className="markdown-outline-list">
-                                  {renderMarkdownOutlineNodes(markdownOutlineTree)}
-                                </div>
-                              ) : (
-                                <div className="markdown-outline-empty">No headings</div>
-                              )}
-                            </aside>
-                            <div
-                              className="outline-divider"
-                              role="separator"
-                              aria-orientation="vertical"
-                              aria-label="Resize outline panel"
-                              onPointerDown={handleMarkdownOutlineResizeStart}
-                            />
-                          </>
+                          <aside className="markdown-outline outline" aria-label="Markdown outline" style={{ width: `${outlineWidth}px` }}>
+                            <div className="markdown-outline-title">Outline</div>
+                            {markdownDocument.headings.length > 0 ? (
+                              <div className="markdown-outline-list">
+                                {renderMarkdownOutlineNodes(markdownOutlineTree)}
+                              </div>
+                            ) : (
+                              <div className="markdown-outline-empty">No headings</div>
+                            )}
+                          </aside>
                         ) : null}
                         <div
-                          className={`code-preview markdown-preview markdown-preview-scroll${showMarkdownOutlinePane ? "" : " markdown-preview-fullwidth"}`}
+                          className={`code-preview markdown-preview markdown-preview-scroll markdown-main${showMarkdownOutlinePane ? "" : " markdown-preview-fullwidth"}`}
                           ref={previewScrollRef}
                           onScroll={handlePreviewScroll}
                         >
                           {renderMarkdownBlocks()}
                         </div>
+                        {showMarkdownOutlinePane ? (
+                          <div
+                            ref={markdownSplitOutlineDividerRef}
+                            className="outline-divider"
+                            role="separator"
+                            aria-orientation="vertical"
+                            aria-label="Resize outline panel"
+                            style={{ left: `${outlineWidth}px` }}
+                            onPointerDown={handleMarkdownOutlineResizeStart}
+                          />
+                        ) : null}
                       </div>
                     </div>
                   </div>
@@ -3131,49 +3116,51 @@ const PaneContainer = forwardRef(function PaneContainer({
           : undefined;
 
         return (
-          <div key={pane.id} className="pane-shell" style={paneStyle}>
-            <Pane
-              pane={pane}
-              isActivePane={pane.id === activePaneId}
-              selectedFile={pane.id === activePaneId ? selectedFile : null}
-              onSelectFile={onSelectFile}
-              onSaved={onSaved}
-              markdownHeadingColors={markdownHeadingColors}
-              markdownHeadingSizes={markdownHeadingSizes}
-              onUpdatePane={(updater) => handlePaneUpdate(pane.id, updater)}
-              onSplitRight={(paneId, tabPath) => splitPane(paneId, "right", tabPath)}
-              onPaneFocus={() => setActivePaneId(pane.id)}
-              draggingTab={draggingTab}
-              dragOverPaneId={dragOverPaneId}
-              dragOverIndex={dragOverIndex}
-              edgeDropPosition={edgeDropPosition}
-              onTabDragStart={handleTabDragStart}
-              onTabDragOver={handleTabDragOver}
-              onTabDrop={handleTabDrop}
-              onTabDragEnd={handleTabDragEnd}
-              onPaneDragOver={handlePaneDragOver}
-              onPaneDrop={handlePaneDrop}
-              onPaneDragLeave={handlePaneDragLeave}
-              onPaneEmpty={removePane}
-            />
-          </div>
+          <Fragment key={pane.id}>
+            <div className="pane-shell" style={paneStyle}>
+              <Pane
+                pane={pane}
+                isActivePane={pane.id === activePaneId}
+                selectedFile={pane.id === activePaneId ? selectedFile : null}
+                onSelectFile={onSelectFile}
+                onSaved={onSaved}
+                markdownHeadingColors={markdownHeadingColors}
+                markdownHeadingSizes={markdownHeadingSizes}
+                onUpdatePane={(updater) => handlePaneUpdate(pane.id, updater)}
+                onSplitRight={(paneId, tabPath) => splitPane(paneId, "right", tabPath)}
+                onPaneFocus={() => setActivePaneId(pane.id)}
+                draggingTab={draggingTab}
+                dragOverPaneId={dragOverPaneId}
+                dragOverIndex={dragOverIndex}
+                edgeDropPosition={edgeDropPosition}
+                onTabDragStart={handleTabDragStart}
+                onTabDragOver={handleTabDragOver}
+                onTabDrop={handleTabDrop}
+                onTabDragEnd={handleTabDragEnd}
+                onPaneDragOver={handlePaneDragOver}
+                onPaneDrop={handlePaneDrop}
+                onPaneDragLeave={handlePaneDragLeave}
+                onPaneEmpty={removePane}
+              />
+            </div>
+            {panes.length === 2 && index === 0 ? (
+              <div
+                className="pane-divider"
+                role="separator"
+                aria-orientation="vertical"
+                onMouseDown={(event) => {
+                  if (event.button !== 0) {
+                    return;
+                  }
+                  event.preventDefault();
+                  resizingRef.current = true;
+                  updateSplitRatioFromPointer(event.clientX);
+                }}
+              />
+            ) : null}
+          </Fragment>
         );
       })}
-      {panes.length === 2 ? (
-        <div
-          className="pane-divider"
-          role="separator"
-          aria-orientation="vertical"
-          onMouseDown={(event) => {
-            if (event.button !== 0) {
-              return;
-            }
-            event.preventDefault();
-            resizingRef.current = true;
-            updateSplitRatioFromPointer(event.clientX);
-          }}
-        />
-      ) : null}
     </div>
   );
 });

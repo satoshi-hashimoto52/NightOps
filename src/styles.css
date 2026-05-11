@@ -1519,15 +1519,28 @@ textarea {
 }
 
 .markdown-preview-layout {
-  display: grid;
-  grid-template-columns: 180px 4px minmax(0, 1fr);
-  gap: 0;
+  display: flex;
+  position: relative;
+  width: 100%;
   min-height: 0;
   flex: 1;
 }
 
 .markdown-preview-layout.markdown-outline-hidden {
-  grid-template-columns: minmax(0, 1fr);
+  display: flex;
+}
+
+.outline {
+  display: block;
+}
+
+.outline-divider {
+  display: block;
+}
+
+.markdown-main {
+  min-width: 0;
+  flex: 1;
 }
 
 .markdown-preview-scroll {
@@ -1538,11 +1551,11 @@ textarea {
 
 .markdown-preview-fullwidth {
   min-width: 0;
-  flex: 1;
 }
 
 .markdown-outline {
   min-width: 0;
+  flex: 0 0 auto;
   max-height: 100%;
   overflow: auto;
   padding: 10px 10px 12px;
@@ -1552,10 +1565,14 @@ textarea {
 }
 
 .outline-divider {
+  position: absolute;
+  top: 0;
   width: 4px;
   cursor: col-resize;
   background: transparent;
-  align-self: stretch;
+  bottom: 0;
+  z-index: 10;
+  pointer-events: auto;
 }
 
 .outline-divider:hover {
