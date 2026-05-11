@@ -1139,7 +1139,7 @@ textarea {
   flex: 0 1 auto;
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   border: 1px solid transparent;
   border-bottom-color: rgba(255, 255, 255, 0.08);
   border-radius: 8px 8px 0 0;
@@ -1181,10 +1181,6 @@ textarea {
   transform: translateY(1px);
 }
 
-.preview-tab.has-actions {
-  padding-right: 68px;
-}
-
 .preview-tab.dragging {
   opacity: 0.6;
 }
@@ -1209,6 +1205,15 @@ textarea {
   right: -2px;
 }
 
+.preview-tab-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  overflow: hidden;
+}
+
 .preview-tab-name {
   flex: 1 1 auto;
   min-width: 0;
@@ -1220,10 +1225,11 @@ textarea {
   color: #f7d56b;
   font-size: 9px;
   line-height: 1;
+  flex: 0 0 auto;
 }
 
 .preview-tab-close {
-  margin-left: auto;
+  flex: 0 0 auto;
   width: 16px;
   height: 16px;
   display: inline-flex;
@@ -1336,24 +1342,43 @@ textarea {
 }
 
 .preview-active-tab-actions {
-  position: absolute;
-  top: 50%;
-  right: 4px;
-  transform: translateY(-50%);
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: 3px;
   flex: 0 0 auto;
-  z-index: 3;
   pointer-events: auto;
 }
 
 .preview-active-tab-actions .preview-mode-button,
 .preview-active-tab-actions .save-button {
   height: 22px;
-  padding: 0 8px;
+  padding: 0 7px;
   border-radius: 6px;
   font-size: 10px;
+  line-height: 1;
+}
+
+.preview-active-tab-actions .markdown-outline-toggle-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  height: 22px;
+  padding: 0 6px;
+  border-radius: 6px;
+  font-size: 10px;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.preview-active-tab-actions .markdown-outline-toggle-button.active {
+  border-color: rgba(245, 197, 66, 0.45);
+  background: rgba(54, 44, 20, 0.78);
+  color: #fff4d4;
+}
+
+.markdown-outline-toggle-icon {
+  display: inline-block;
+  font-size: 11px;
   line-height: 1;
 }
 
@@ -1491,10 +1516,19 @@ textarea {
   flex: 1;
 }
 
+.markdown-preview-layout.markdown-outline-hidden {
+  grid-template-columns: minmax(0, 1fr);
+}
+
 .markdown-preview-scroll {
   min-width: 0;
   min-height: 0;
   overflow: auto;
+}
+
+.markdown-preview-fullwidth {
+  min-width: 0;
+  flex: 1;
 }
 
 .markdown-outline {
@@ -1521,11 +1555,21 @@ textarea {
   gap: 4px;
 }
 
+.markdown-outline-node {
+  min-width: 0;
+}
+
+.markdown-outline-children {
+  display: grid;
+  gap: 4px;
+  margin-top: 4px;
+}
+
 .markdown-outline-item {
   width: 100%;
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 3px;
   border: 0;
   border-radius: 7px;
   background: transparent;
@@ -1558,9 +1602,45 @@ textarea {
   border: 0;
   background: transparent;
   color: inherit;
-  padding: 6px 8px;
+  padding: 6px 6px 6px 4px;
   text-align: left;
   font: inherit;
+}
+
+.markdown-outline-fold-toggle,
+.markdown-outline-preview-toggle {
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: currentColor;
+  padding: 0;
+  font-size: 10px;
+  line-height: 1;
+  opacity: 0.55;
+}
+
+.markdown-outline-fold-toggle {
+  margin-left: 2px;
+}
+
+.markdown-outline-fold-toggle:hover,
+.markdown-outline-fold-toggle:focus-visible,
+.markdown-outline-preview-toggle:hover,
+.markdown-outline-preview-toggle:focus-visible {
+  opacity: 1;
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.markdown-outline-fold-toggle:disabled {
+  opacity: 0.18;
+  background: transparent;
+}
+
+.markdown-outline-fold-toggle-open {
+  transform: none;
 }
 
 .markdown-outline-copy {
@@ -1570,6 +1650,11 @@ textarea {
 @media (hover: none) and (pointer: coarse) {
   .markdown-copy-button {
     opacity: 0.85;
+  }
+
+  .markdown-outline-fold-toggle,
+  .markdown-outline-preview-toggle {
+    opacity: 0.8;
   }
 }
 
@@ -2047,10 +2132,16 @@ textarea {
 .preview-actions button:hover,
 .ghost-button:hover,
 .launch-button:hover,
-.save-button:hover {
+.save-button:hover,
+.preview-active-tab-actions .markdown-outline-toggle-button:hover {
   transform: translateY(-1px);
   border-color: rgba(245, 197, 66, 0.45);
   background: rgba(28, 33, 43, 0.76);
+}
+
+.preview-active-tab-actions .markdown-outline-toggle-button:hover {
+  background: rgba(54, 44, 20, 0.85);
+  color: #fff4d4;
 }
 
 .preview-actions .active,
@@ -2061,6 +2152,16 @@ textarea {
 
 .launch-button {
   color: #fff7db;
+}
+
+@media (max-width: 520px) {
+  .preview-active-tab-actions .markdown-outline-toggle-button {
+    padding: 0 5px;
+  }
+
+  .markdown-outline-toggle-label {
+    display: none;
+  }
 }
 
 .code-preview,

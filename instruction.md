@@ -1,255 +1,131 @@
-# Copy Button Icon Modernization Instructions
+outline toggle を tab action 側へ移動した結果、
 
-## Goal
+[ Preview ] [ Edit ] [ ☰ Outline ]
 
-Replace emoji-based copy UI icons with compact IDE-style icon components.
+の横幅によって、
+ファイル名表示領域が圧迫されています。
 
-Current state:
+タブタイトル（ファイル名）が優先して見えるよう、
+tab layout を調整してください。
 
-* CopyButton component already unified
-* copy interactions centralized
-* 📋 / ✓ currently used
-* copied state behavior already shared
-
-Next goal:
-improve visual consistency and cross-platform rendering quality.
-
----
-
-# IMPORTANT
-
-Do NOT redesign the copy interaction system.
-
-Maintain:
-
-* existing CopyButton behavior
-* copied-state timing
-* accessibility behavior
-* keyboard support
-* outline integration
-* heading integration
-
-Only modernize the icon rendering.
+目的:
+- ファイル名の視認性維持
+- action button 群による圧迫防止
+- AIドキュメント作業時の識別性向上
 
 ---
 
-# Requirements
+# 要件
 
-## 1. Replace Emoji Icons
+現在:
 
-Replace:
+[ FileName.md ][ Preview ][ Edit ][ ☰ Outline ]
 
-| Current | Replace With |
-| ------- | ------------ |
-| 📋      | copy icon    |
-| ✓       | check icon   |
+action 側が固定幅寄りになっており、
+ファイル名領域が圧迫されています。
 
-Recommended library:
-
-```text id="djlwm1"
-lucide-react
-```
-
-Recommended icons:
-
-* Copy
-* Check
-
-Alternative lightweight icon systems are acceptable if visually compact.
+以下へ調整してください。
 
 ---
 
-# 2. Maintain Compact IDE Appearance
+# レイアウト方針
 
-Requirements:
+## ファイル名領域を優先
 
-* compact sizing
-* low visual noise
-* thin stroke appearance
-* aligned baseline rendering
+- file tab title を flex-grow
+- action buttons は shrink 最小化
 
-Recommended size:
+推奨:
 
-```text id="qjlwm2"
-14px - 16px
-```
-
-Recommended style:
-
-```css id="zjlwm3"
-opacity: 0.45;
-```
-
-Increase visibility on:
-
-* hover
-* focus
-* active
-
-Avoid oversized icons.
+- title: flex: 1 1 auto
+- actions: flex: 0 0 auto
 
 ---
 
-# 3. Preserve Existing UX
+# ボタンサイズ縮小
 
-Maintain:
+Preview / Edit / Outline は
+必要最小サイズへ調整。
 
-* copied-state transition
-* copied timeout behavior
-* keyboard accessibility
-* aria-label behavior
-* touch compatibility
+推奨:
 
-Do NOT change interaction flow.
-
----
-
-# 4. Accessibility
-
-CopyButton must remain:
-
-* focusable
-* keyboard operable
-* screen-reader compatible
-
-Preserve:
-
-```jsx id="mjlwm4"
-aria-label
-```
-
-behavior.
+- padding 縮小
+- gap 縮小
+- icon + short label
+- height 統一
 
 ---
 
-# 5. Avoid Heavy Animation
+# 長いファイル名
 
-Do NOT add:
+ファイル名領域は:
 
-* bounce effects
-* scale animations
-* toast notifications
-* large transitions
+- overflow hidden
+- text-overflow ellipsis
+- white-space nowrap
 
-Recommended:
+を適用。
 
-* subtle opacity transition
-* lightweight color shift
-* minimal motion
-
-This is an IDE-oriented interface.
+ただし可能な限り表示幅を確保してください。
 
 ---
 
-# 6. Shared Component Integrity
+# 優先順位
 
-All copy UI locations must continue using:
+表示優先度:
 
-```text id="vjlwm5"
-CopyButton.jsx
-```
+1. ファイル名
+2. Edit
+3. Preview
+4. Outline
 
-Avoid reintroducing duplicated copy icon logic.
-
----
-
-# 7. Touch Device Compatibility
-
-Icons must remain visible and usable on:
-
-* touch devices
-* narrow layouts
-* split preview mode
-
-Avoid hover-only visibility.
+outline は最悪 icon only へ縮退可能。
 
 ---
 
-# 8. Styling Requirements
+# レスポンシブ
 
-Maintain NightOps visual language:
+横幅不足時:
 
-* dense
-* technical
-* compact
-* IDE-oriented
+☰ Outline
+↓
+☰
 
-Avoid:
-
-* glossy buttons
-* floating action UI
-* oversized hit areas
-* decorative effects
+へ自動縮退しても良いです。
 
 ---
 
-# 9. Future-Proofing
+# 推奨構造
 
-Prepare CopyButton for future extensibility:
+.tab-header
+  ├─ .tab-title
+  └─ .tab-actions
 
-Potential future additions:
+.tab-title
+  flex: 1 1 auto
+  min-width: 0
 
-* tooltip
-* copy format selection
-* keyboard shortcut hints
-* long press behavior
-
-Do NOT implement these yet.
-
-Only keep architecture extensible.
+.tab-actions
+  flex: 0 0 auto
 
 ---
 
-# 10. Validation
+# 追加推奨
 
-Verify:
+可能なら:
 
-* heading copy still works
-* outline copy still works
-* copied state still resets
-* icon alignment consistency
-* touch usability
-* keyboard accessibility
-* no layout jitter
-* build success
-
-```bash id="pjlwm6"
-npm run build
-```
+hover 時に full file path tooltip 表示。
 
 ---
 
-# Recommended Incremental Refactor
+# 確認項目
 
-If markdown-related shared components are increasing:
+- ファイル名表示幅が増えている
+- 長いmd名でも見やすい
+- ボタン群が右寄せされている
+- 横幅不足時に崩れない
+- build 通過
 
-begin organizing toward:
-
-```text id="rjlwm7"
-src/components/markdown/
-```
-
-Suggested future structure:
-
-```text id="kjlwm8"
-markdown/
- ├─ CopyButton.jsx
- ├─ renderers/
- ├─ hooks/
- └─ utils/
-```
-
-Do NOT perform a large-scale migration yet.
-
-Only move shared logic incrementally.
-
----
-
-# Output Rules
-
-* modify changed sections only
-* avoid unrelated refactors
-* preserve markdown parser behavior
-* preserve copy interaction behavior
-* preserve outline behavior
-* preserve current accessibility behavior
+変更対象:
+- src/components/PreviewPane.jsx
+- src/styles.css
