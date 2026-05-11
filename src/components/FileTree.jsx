@@ -55,7 +55,47 @@ function normalizeEntries(entries, parentPath) {
   return entries.map((entry) => ({ ...entry, parentPath }));
 }
 
-function buildVisibleRows(rootNode, expandedPaths, warningMap) {
+function getEntrySortKey(entry, mode) {
+  if (mode === "ext") {
+    return getFileNameParts(entry.name || "").ext.replace(/^\./, "").toLowerCase();
+  }
+
+  return entry.name || "";
+}
+
+function sortFiles(files, mode) {
+  return [...files].sort((a, b) => {
+    const aIsDir = a.type === "directory";
+    const bIsDir = b.type === "directory";
+    if (aIsDir !== bIsDir) {
+      return aIsDir ? -1 : 1;
+    }
+
+    if (mode === "update") {
+      const timeDiff = (Number(b.mtime) || 0) - (Number(a.mtime) || 0);
+      if (timeDiff !== 0) {
+        return timeDiff;
+      }
+    }
+
+    if (mode === "ext") {
+      const extDiff = getEntrySortKey(a, mode).localeCompare(getEntrySortKey(b, mode));
+      if (extDiff !== 0) {
+        return extDiff;
+      }
+      return (a.name || "").localeCompare(b.name || "");
+    }
+
+    const nameDiff = (a.name || "").localeCompare(b.name || "");
+    if (nameDiff !== 0) {
+      return nameDiff;
+    }
+
+    return (Number(b.mtime) || 0) - (Number(a.mtime) || 0);
+  });
+}
+
+function buildVisibleRows(rootNode, expandedPaths, warningMap, sortMode) {
   if (!rootNode) {
     return [];
   }
@@ -89,7 +129,7 @@ function buildVisibleRows(rootNode, expandedPaths, warningMap) {
       });
     }
 
-    const children = Array.isArray(node.children) ? node.children : [];
+    const children = sortFiles(Array.isArray(node.children) ? node.children : [], sortMode);
     for (let index = children.length - 1; index >= 0; index -= 1) {
       stack.push({ node: children[index], level: level + 1 });
     }
@@ -98,8 +138,8 @@ function buildVisibleRows(rootNode, expandedPaths, warningMap) {
   return rows;
 }
 
-function flattenTree(rootNode, expandedPaths, warningMap) {
-  return buildVisibleRows(rootNode, expandedPaths, warningMap);
+function flattenTree(rootNode, expandedPaths, warningMap, sortMode) {
+  return buildVisibleRows(rootNode, expandedPaths, warningMap, sortMode);
 }
 
 function findNodeByPath(rootNode, targetPath) {
@@ -281,7 +321,7 @@ async function bringWindowToFront() {
   }
 }
 
-export default function FileTree({ rootPath, onSelectFile, selectedFilePath, reloadToken = 0, onDropFiles, onNotify }) {
+export default function FileTree({ rootPath, onSelectFile, selectedFilePath, reloadToken = 0, sortMode = "name", onDropFiles, onNotify }) {
   const [tree, setTree] = useState(null);
   const [expandedPaths, setExpandedPaths] = useState(() => loadExpandedPaths(rootPath));
   const [warningMap, setWarningMap] = useState({});
@@ -751,7 +791,7 @@ export default function FileTree({ rootPath, onSelectFile, selectedFilePath, rel
         return;
       }
 
-      const rows = buildVisibleRows(tree, expandedPaths, warningMap);
+      const rows = buildVisibleRows(tree, expandedPaths, warningMap, sortMode);
       const pendingRow = rows.find((row) => {
         if (row.kind !== "node" || row.node.type !== "directory" || !row.isExpanded) {
           return false;
@@ -779,7 +819,7 @@ export default function FileTree({ rootPath, onSelectFile, selectedFilePath, rel
     }
 
     loadExpandedChildren();
-  }, [expandedPaths, rootPath, tree, warningMap]);
+  }, [expandedPaths, rootPath, tree, warningMap, sortMode]);
 
   async function handleToggle(dirPath, forceExpand = false) {
     const nextExpanded = forceExpand ? true : !expandedPaths.has(dirPath);
@@ -1003,7 +1043,7 @@ export default function FileTree({ rootPath, onSelectFile, selectedFilePath, rel
     await loadRoot();
   }
 
-  const visibleNodes = useMemo(() => flattenTree(tree, expandedPaths, warningMap), [tree, expandedPaths, warningMap]);
+  const visibleNodes = useMemo(() => flattenTree(tree, expandedPaths, warningMap, sortMode), [tree, expandedPaths, warningMap, sortMode]);
   const rows = visibleNodes;
   const selectedPathList = useMemo(() => Array.from(selectedPaths), [selectedPaths]);
   const dragTargetNode = dragTargetPath ? visibleNodes.find((row) => row.kind === "node" && row.node.path === dragTargetPath)?.node || null : null;

@@ -4,6 +4,7 @@ import FileTree from "./components/FileTree";
 import PaneContainer from "./components/PreviewPane";
 import LaunchPanel from "./components/LaunchPanel";
 import SettingsPanel from "./components/SettingsPanel";
+import BootScreen from "./components/BootScreen";
 import { extractPathsFromEvent, handleDragOver as handleExternalDragOver } from "./utils/drop";
 import { getCodexStats } from "./utils/codexLog";
 import {
@@ -23,6 +24,16 @@ import {
 } from "./utils/fileLoader";
 
 const SELECTED_FILE_KEY = "nightops:selected-file";
+const TREE_SORT_KEY = "treeSortMode";
+
+function loadTreeSortMode() {
+  try {
+    const value = localStorage.getItem(TREE_SORT_KEY);
+    return value === "ext" || value === "update" ? value : "name";
+  } catch {
+    return "name";
+  }
+}
 
 function getDiskColor(free, total) {
   if (!(total > 0)) {
@@ -79,6 +90,7 @@ async function findFileByName(rootPath, query) {
 }
 
 export default function App() {
+  const [booting, setBooting] = useState(true);
   const [rootPath, setRootPath] = useState("");
   const [selectedFile, setSelectedFile] = useState(null);
   const [launchOpen, setLaunchOpen] = useState(false);
@@ -90,6 +102,7 @@ export default function App() {
   const [sidebarWidth, setSidebarWidth] = useState(140);
   const [treeReloadToken, setTreeReloadToken] = useState(0);
   const [browseMenu, setBrowseMenu] = useState(null);
+  const [sortMode, setSortMode] = useState(() => loadTreeSortMode());
   const leftPanelRef = useRef(null);
   const paneContainerRef = useRef(null);
   const [settings, setSettings] = useState({
@@ -147,8 +160,20 @@ export default function App() {
   }, [selectedFile]);
 
   useEffect(() => {
-    if (!window.api && !window.nightOps) {
+    try {
+      localStorage.setItem(TREE_SORT_KEY, sortMode);
+    } catch {
       return;
+    }
+  }, [sortMode]);
+
+  useEffect(() => {
+    const timerId = window.setTimeout(() => {
+      setBooting(false);
+    }, 820);
+
+    if (!window.api && !window.nightOps) {
+      return () => window.clearTimeout(timerId);
     }
 
     async function init() {
@@ -162,6 +187,7 @@ export default function App() {
     }
 
     init();
+    return () => window.clearTimeout(timerId);
   }, []);
 
   useEffect(() => {
@@ -675,6 +701,19 @@ export default function App() {
           <div className="panel-title panel-title-with-hint">
             <span>Tree</span>
             <span className="panel-title-hint">Fold(Cmd+B)</span>
+            <button
+              type="button"
+              className="tree-sort-btn"
+              onClick={() => {
+                setSortMode((current) => {
+                  if (current === "name") return "ext";
+                  if (current === "ext") return "update";
+                  return "name";
+                });
+              }}
+            >
+              {sortMode === "ext" ? "Ext ▼" : sortMode === "update" ? "Update ▼" : "Name ▼"}
+            </button>
           </div>
           {!treeCollapsed ? (
             <>
@@ -682,6 +721,7 @@ export default function App() {
                 <FileTree
                   rootPath={rootPath}
                   selectedFilePath={selectedFile?.path}
+                  sortMode={sortMode}
                   onSelectFile={handleSelectFile}
                   onDropFiles={onDropFiles}
                   onNotify={setNotice}
@@ -738,6 +778,7 @@ export default function App() {
         />
       ) : null}
       {notice ? <div className="toast">{notice}</div> : null}
+      {booting ? <BootScreen onDone={() => setBooting(false)} /> : null}
     </div>
   );
 }

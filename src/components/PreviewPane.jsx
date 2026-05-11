@@ -250,6 +250,223 @@ function escapeHtml(code) {
     .replaceAll("'", "&#39;");
 }
 
+function clampEditorPosition(value, max) {
+  return Math.max(0, Math.min(max, Number(value) || 0));
+}
+
+function normalizeEditorRanges(ranges, textLength) {
+  return (ranges || [])
+    .map((range) => {
+      const start = clampEditorPosition(Math.min(range?.start ?? 0, range?.end ?? 0), textLength);
+      const end = clampEditorPosition(Math.max(range?.start ?? 0, range?.end ?? 0), textLength);
+      return { start, end };
+    })
+    .sort((a, b) => a.start - b.start || a.end - b.end);
+}
+
+function rangeKey(range) {
+  return `${range.start}:${range.end}`;
+}
+
+function findTextMatches(text, query, limit = 1000) {
+  const normalizedQuery = String(query ?? "").toLowerCase();
+  const sourceText = String(text ?? "");
+  if (!normalizedQuery) {
+    return [];
+  }
+
+  const normalizedText = sourceText.toLowerCase();
+  const matches = [];
+  let fromIndex = 0;
+
+  while (fromIndex <= normalizedText.length && matches.length < limit) {
+    const matchIndex = normalizedText.indexOf(normalizedQuery, fromIndex);
+    if (matchIndex === -1) {
+      break;
+    }
+
+    matches.push({
+      start: matchIndex,
+      end: matchIndex + normalizedQuery.length
+    });
+    fromIndex = matchIndex + Math.max(1, normalizedQuery.length);
+  }
+
+  return matches;
+}
+
+function buildEditorHighlightHtml(text, matches, currentMatchIndex, selections) {
+  const sourceText = String(text ?? "");
+  if (!sourceText) {
+    return "";
+  }
+
+  const activeSelections = normalizeEditorRanges(selections || [], sourceText.length);
+  const activeMatches = normalizeEditorRanges(matches || [], sourceText.length).map((match, index) => ({
+    ...match,
+    active: index === currentMatchIndex
+  }));
+
+  if (activeSelections.length === 0 && activeMatches.length === 0) {
+    return escapeHtml(sourceText);
+  }
+
+  const boundaries = new Set([0, sourceText.length]);
+  [...activeSelections, ...activeMatches].forEach((range) => {
+    boundaries.add(range.start);
+    boundaries.add(range.end);
+  });
+
+  const points = Array.from(boundaries).sort((a, b) => a - b);
+  const decorations = [...activeSelections.map((range) => ({ ...range, kind: "selection" })), ...activeMatches.map((range) => ({ ...range, kind: "match" }))];
+
+  let html = "";
+
+  for (let index = 0; index < points.length - 1; index += 1) {
+    const start = points[index];
+    const end = points[index + 1];
+    if (end <= start) {
+      continue;
+    }
+
+    const segment = sourceText.slice(start, end);
+    const segmentClasses = [];
+    let hasSelection = false;
+    let hasMatch = false;
+    let isActiveMatch = false;
+
+    for (const decoration of decorations) {
+      if (decoration.start <= start && decoration.end > start) {
+        if (decoration.kind === "selection") {
+          hasSelection = true;
+        } else if (decoration.kind === "match") {
+          hasMatch = true;
+          isActiveMatch = isActiveMatch || Boolean(decoration.active);
+        }
+      }
+    }
+
+    if (hasMatch) {
+      segmentClasses.push("highlight");
+      if (isActiveMatch) {
+        segmentClasses.push("active");
+      }
+    }
+
+    if (hasSelection) {
+      segmentClasses.push("selection-multi");
+    }
+
+    const escaped = escapeHtml(segment);
+    html += segmentClasses.length > 0 ? `<span class="${segmentClasses.join(" ")}">${escaped}</span>` : escaped;
+  }
+
+  return html;
+}
+
+function findNextEditableMatchIndex(matches, startPosition, excludedKeys = new Set()) {
+  if (!matches.length) {
+    return -1;
+  }
+
+  const normalizedStart = Math.max(0, Number(startPosition) || 0);
+  let candidateIndex = matches.findIndex((match) => match.start >= normalizedStart);
+  if (candidateIndex === -1) {
+    candidateIndex = 0;
+  }
+
+  for (let offset = 0; offset < matches.length; offset += 1) {
+    const index = (candidateIndex + offset) % matches.length;
+    const match = matches[index];
+    if (!excludedKeys.has(rangeKey(match))) {
+      return index;
+    }
+  }
+
+  return -1;
+}
+
+function applyMultiSelectionEdit(text, ranges, editType, insertText = "") {
+  const sourceText = String(text ?? "");
+  const orderedRanges = normalizeEditorRanges(ranges, sourceText.length);
+  if (orderedRanges.length === 0) {
+    return {
+      value: sourceText,
+      selections: []
+    };
+  }
+
+  let nextText = sourceText;
+  const nextSelections = [];
+  const insertValue = String(insertText ?? "");
+
+  for (let index = orderedRanges.length - 1; index >= 0; index -= 1) {
+    const range = orderedRanges[index];
+    const start = range.start;
+    const end = range.end;
+
+    if (editType === "insert") {
+      nextText = `${nextText.slice(0, start)}${insertValue}${nextText.slice(end)}`;
+      nextSelections.unshift({
+        start: start + insertValue.length,
+        end: start + insertValue.length
+      });
+      continue;
+    }
+
+    if (editType === "backspace") {
+      if (start !== end) {
+        nextText = `${nextText.slice(0, start)}${nextText.slice(end)}`;
+        nextSelections.unshift({
+          start,
+          end: start
+        });
+        continue;
+      }
+
+      if (start > 0) {
+        nextText = `${nextText.slice(0, start - 1)}${nextText.slice(start)}`;
+        nextSelections.unshift({
+          start: start - 1,
+          end: start - 1
+        });
+        continue;
+      }
+
+      nextSelections.unshift({
+        start,
+        end
+      });
+      continue;
+    }
+
+    if (editType === "delete") {
+      if (start !== end) {
+        nextText = `${nextText.slice(0, start)}${nextText.slice(end)}`;
+        nextSelections.unshift({
+          start,
+          end: start
+        });
+        continue;
+      }
+
+      if (start < nextText.length) {
+        nextText = `${nextText.slice(0, start)}${nextText.slice(start + 1)}`;
+      }
+
+      nextSelections.unshift({
+        start,
+        end: start
+      });
+    }
+  }
+
+  return {
+    value: nextText,
+    selections: nextSelections
+  };
+}
+
 async function copyTextToClipboard(text) {
   const value = String(text ?? "");
 
@@ -677,6 +894,7 @@ function createEmptyTabState(path, name) {
     collapsedPreviewSectionIds: [],
     previewScrollTop: 0,
     editorScrollTop: 0,
+    editorScrollLeft: 0,
     editorSelection: null
   };
 }
@@ -731,9 +949,16 @@ function Pane({
   const [outlineWidth, setOutlineWidth] = useState(() => loadMarkdownOutlineWidth());
   const [activeHeadingId, setActiveHeadingId] = useState("");
   const [editorSelection, setEditorSelection] = useState(null);
+  const [editorScroll, setEditorScroll] = useState({ top: 0, left: 0 });
+  const [searchQuery, setSearchQuery] = useState("");
+  const [matches, setMatches] = useState([]);
+  const [currentMatchIndex, setCurrentMatchIndex] = useState(-1);
+  const [selections, setSelections] = useState([]);
+  const [searchOpen, setSearchOpen] = useState(false);
   const previewShellRef = useRef(null);
   const pdfWrapRef = useRef(null);
   const pdfPageUrlsRef = useRef([]);
+  const editorSearchInputRef = useRef(null);
   const markdownPreviewOutlineLayoutRef = useRef(null);
   const markdownSplitOutlineLayoutRef = useRef(null);
   const markdownPreviewOutlineDividerRef = useRef(null);
@@ -770,9 +995,54 @@ function Pane({
     [editorLineCount]
   );
 
+  const editorOverlayHtml = useMemo(() => {
+    const selectedRanges = selections.length > 0 ? selections : editorSelection?.start !== editorSelection?.end ? [editorSelection] : [];
+    return buildEditorHighlightHtml(editValue, matches, currentMatchIndex, selectedRanges);
+  }, [currentMatchIndex, editValue, editorSelection, matches, selections]);
+
   useEffect(() => {
     saveMarkdownOutlineWidth(outlineWidth);
   }, [outlineWidth]);
+
+  useEffect(() => {
+    setSearchQuery("");
+    setMatches([]);
+    setCurrentMatchIndex(-1);
+    setSelections([]);
+    setSearchOpen(false);
+    setEditorSelection(null);
+    setEditorScroll({ top: 0, left: 0 });
+  }, [activeTabPath]);
+
+  useEffect(() => {
+    const timerId = window.setTimeout(() => {
+      const query = searchQuery.trim();
+      if (!query) {
+        setMatches([]);
+        setCurrentMatchIndex(-1);
+        return;
+      }
+
+      const nextMatches = findTextMatches(editValue, query, 1000);
+      setMatches(nextMatches);
+      setCurrentMatchIndex(nextMatches.length > 0 ? Math.min(Math.max(currentMatchIndex, 0), nextMatches.length - 1) : -1);
+    }, 100);
+
+    return () => window.clearTimeout(timerId);
+  }, [editValue, searchQuery]);
+
+  useEffect(() => {
+    if (!searchOpen) {
+      return;
+    }
+
+    const timerId = window.setTimeout(() => {
+      editorSearchInputRef.current?.focus();
+      editorSearchInputRef.current?.select();
+    }, 0);
+
+    return () => window.clearTimeout(timerId);
+  }, [searchOpen]);
 
   useEffect(() => {
     function handlePointerMove(event) {
@@ -990,6 +1260,7 @@ function Pane({
       collapsedPreviewSectionIds: Array.from(collapsedPreviewSectionIds),
       previewScrollTop: previewScrollRef.current?.scrollTop || 0,
       editorScrollTop: editorAreaRef.current?.scrollTop || 0,
+      editorScrollLeft: editorAreaRef.current?.scrollLeft || 0,
       editorSelection,
       ...nextOverrides
     };
@@ -1037,6 +1308,10 @@ function Pane({
     setCollapsedPreviewSectionIds(new Set(nextState.collapsedPreviewSectionIds || []));
     setActiveHeadingId(nextState.activeHeadingId || "");
     setEditorSelection(nextState.editorSelection || null);
+    setEditorScroll({
+      top: Number(nextState.editorScrollTop) || 0,
+      left: Number(nextState.editorScrollLeft) || 0
+    });
   }
 
   function handlePreviewWheel(event) {
@@ -1100,8 +1375,13 @@ function Pane({
     if (editorGutterRef.current) {
       editorGutterRef.current.scrollTop = event.currentTarget.scrollTop;
     }
+    setEditorScroll({
+      top: event.currentTarget.scrollTop,
+      left: event.currentTarget.scrollLeft
+    });
     syncActiveTabState({
-      editorScrollTop: event.currentTarget.scrollTop
+      editorScrollTop: event.currentTarget.scrollTop,
+      editorScrollLeft: event.currentTarget.scrollLeft
     });
   }
 
@@ -1112,12 +1392,263 @@ function Pane({
   }
 
   function handleEditorSelect(event) {
+    if (editorAreaRef.current?.dataset.ignoreSelect === "1") {
+      delete editorAreaRef.current.dataset.ignoreSelect;
+      return;
+    }
+
     syncActiveTabState({
       editorSelection: {
         start: event.currentTarget.selectionStart,
         end: event.currentTarget.selectionEnd
       }
     });
+    setEditorSelection({
+      start: event.currentTarget.selectionStart,
+      end: event.currentTarget.selectionEnd
+    });
+    if (selections.length > 0) {
+      setSelections([]);
+    }
+  }
+
+  function clearSearchState() {
+    setSearchOpen(false);
+    setSearchQuery("");
+    setMatches([]);
+    setCurrentMatchIndex(-1);
+    setSelections([]);
+    setEditorSelection(null);
+  }
+
+  function getEditorSelectionRange() {
+    const start = editorAreaRef.current?.selectionStart ?? 0;
+    const end = editorAreaRef.current?.selectionEnd ?? start;
+    return {
+      start: Math.min(start, end),
+      end: Math.max(start, end)
+    };
+  }
+
+  function focusEditorSelection(range) {
+    const target = editorAreaRef.current;
+    if (!target) {
+      return;
+    }
+
+    target.dataset.ignoreSelect = "1";
+    try {
+      target.focus();
+      target.setSelectionRange(range.start, range.end);
+    } catch {
+      // Ignore selection failures for unsupported browser states.
+    }
+
+    window.setTimeout(() => {
+      if (target.dataset.ignoreSelect === "1") {
+        delete target.dataset.ignoreSelect;
+      }
+    }, 0);
+  }
+
+  function selectMatchAtIndex(index) {
+    const match = matches[index];
+    if (!match) {
+      return;
+    }
+
+    setCurrentMatchIndex(index);
+    setEditorSelection(match);
+    focusEditorSelection(match);
+  }
+
+  function handleSearchNavigate(delta) {
+    if (!matches.length) {
+      return;
+    }
+
+    const nextIndex = (currentMatchIndex + delta + matches.length) % matches.length;
+    selectMatchAtIndex(nextIndex);
+  }
+
+  function handleSearchQueryChange(value) {
+    setSearchQuery(value);
+    setCurrentMatchIndex(0);
+    setSelections([]);
+    setEditorSelection(null);
+  }
+
+  function seedSearchFromSelection() {
+    const range = getEditorSelectionRange();
+    const selectedText = editValue.slice(range.start, range.end);
+    if (!selectedText) {
+      return "";
+    }
+
+    setSearchOpen(true);
+    handleSearchQueryChange(selectedText);
+    return selectedText;
+  }
+
+  function handleCommandD() {
+    const selectedRange = getEditorSelectionRange();
+    const selectedText = editValue.slice(selectedRange.start, selectedRange.end);
+    const query = searchQuery.trim() || selectedText.trim();
+    if (!query) {
+      return;
+    }
+
+    const nextMatches = findTextMatches(editValue, query, 1000);
+    const nextSelections = selections.length > 0 ? [...selections] : [];
+
+    if (selectedText) {
+      const selectedKey = rangeKey(selectedRange);
+      if (!nextSelections.some((range) => rangeKey(range) === selectedKey)) {
+        nextSelections.push(selectedRange);
+      }
+    } else if (nextSelections.length === 0 && nextMatches[currentMatchIndex]) {
+      nextSelections.push(nextMatches[currentMatchIndex]);
+    } else if (nextSelections.length === 0 && nextMatches[0]) {
+      nextSelections.push(nextMatches[0]);
+    }
+
+    const selectedKeys = new Set(nextSelections.map(rangeKey));
+    const basePosition = nextSelections.length > 0 ? nextSelections[nextSelections.length - 1].end : selectedRange.end;
+    const nextMatchIndex = findNextEditableMatchIndex(nextMatches, basePosition, selectedKeys);
+    if (nextMatchIndex === -1) {
+      return;
+    }
+
+    const nextSelection = nextMatches[nextMatchIndex];
+    nextSelections.push(nextSelection);
+    setSelections(normalizeEditorRanges(nextSelections, editValue.length));
+    setSearchOpen(true);
+    if (!searchQuery.trim() && query) {
+      setSearchQuery(query);
+      setMatches(nextMatches);
+    }
+    setCurrentMatchIndex(nextMatchIndex);
+    setEditorSelection(nextSelection);
+    focusEditorSelection(nextSelection);
+  }
+
+  function handleEditorKeyDown(event) {
+    if (event.metaKey && !event.altKey && !event.ctrlKey && event.key.toLowerCase() === "f") {
+      event.preventDefault();
+      setSearchOpen(true);
+      const selectedText = seedSearchFromSelection();
+      if (!selectedText && searchQuery.trim()) {
+        window.setTimeout(() => editorSearchInputRef.current?.select(), 0);
+        return;
+      }
+
+      window.setTimeout(() => editorSearchInputRef.current?.select(), 0);
+      return;
+    }
+
+    if (event.metaKey && !event.altKey && !event.ctrlKey && event.key.toLowerCase() === "d") {
+      event.preventDefault();
+      handleCommandD();
+      return;
+    }
+
+    if (event.key === "Escape") {
+      if (searchOpen || searchQuery || selections.length > 0) {
+        event.preventDefault();
+        clearSearchState();
+      }
+      return;
+    }
+
+    if (searchOpen) {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        handleSearchNavigate(event.shiftKey ? -1 : 1);
+        return;
+      }
+
+      if (event.key === "ArrowDown") {
+        event.preventDefault();
+        handleSearchNavigate(1);
+        return;
+      }
+
+      if (event.key === "ArrowUp") {
+        event.preventDefault();
+        handleSearchNavigate(-1);
+        return;
+      }
+    }
+
+    if (selections.length > 0 && !event.metaKey && !event.ctrlKey && !event.altKey) {
+      if (event.key === "ArrowLeft" || event.key === "ArrowRight" || event.key === "ArrowUp" || event.key === "ArrowDown" || event.key === "Home" || event.key === "End") {
+        setSelections([]);
+        return;
+      }
+    }
+  }
+
+  function handleEditorBeforeInput(event) {
+    if (selections.length === 0) {
+      return;
+    }
+
+    const inputType = event.nativeEvent?.inputType || "";
+    if (!inputType.startsWith("insert") && !inputType.startsWith("delete")) {
+      return;
+    }
+
+    if (inputType === "insertFromPaste") {
+      return;
+    }
+
+    event.preventDefault();
+
+    const insertText = inputType === "insertLineBreak"
+      ? "\n"
+      : typeof event.data === "string"
+        ? event.data
+        : "";
+
+    const editKind = inputType === "deleteContentBackward"
+      ? "backspace"
+      : inputType === "deleteContentForward"
+        ? "delete"
+        : "insert";
+
+    const nextState = applyMultiSelectionEdit(editValue, selections, editKind, insertText);
+    setEditValue(nextState.value);
+    setSelections(nextState.selections);
+    syncActiveTabState({
+      editValue: nextState.value,
+      isDirty: nextState.value !== baseEditValue,
+      editorSelection: nextState.selections[0] || editorSelection
+    });
+    if (nextState.selections[0]) {
+      setEditorSelection(nextState.selections[0]);
+      focusEditorSelection(nextState.selections[0]);
+    }
+  }
+
+  function handleEditorPaste(event) {
+    if (selections.length === 0) {
+      return;
+    }
+
+    event.preventDefault();
+    const pasteText = event.clipboardData?.getData("text") || "";
+    const nextState = applyMultiSelectionEdit(editValue, selections, "insert", pasteText);
+    setEditValue(nextState.value);
+    setSelections(nextState.selections);
+    syncActiveTabState({
+      editValue: nextState.value,
+      isDirty: nextState.value !== baseEditValue,
+      editorSelection: nextState.selections[0] || editorSelection
+    });
+    if (nextState.selections[0]) {
+      setEditorSelection(nextState.selections[0]);
+      focusEditorSelection(nextState.selections[0]);
+    }
   }
 
   function openOrActivateTab(filePath, fileName) {
@@ -1731,9 +2262,16 @@ function Pane({
 
     requestAnimationFrame(() => {
       target.scrollTop = Number(scrollTop) || 0;
+      const nextScrollLeft = Number(savedState.editorScrollLeft) || 0;
+      target.scrollLeft = nextScrollLeft;
+      setEditorScroll({
+        top: Number(scrollTop) || 0,
+        left: nextScrollLeft
+      });
       if (mode === "edit" && editorAreaRef.current && savedState.editorSelection) {
         const { start, end } = savedState.editorSelection;
         try {
+          setEditorSelection({ start: start ?? 0, end: end ?? 0 });
           editorAreaRef.current.setSelectionRange(start ?? 0, end ?? 0);
         } catch {
           return;
@@ -1956,6 +2494,121 @@ function Pane({
     event.preventDefault();
     event.stopPropagation();
     divider.setPointerCapture?.(event.pointerId);
+  }
+
+  function renderEditorShell() {
+    return (
+      <div className="editor-shell editor-shell-searchable">
+        <div className="editor-line-numbers" ref={editorGutterRef} aria-hidden="true">
+          {editorLineNumbers.map((lineNumber) => (
+            <div key={lineNumber} className="editor-line-number">
+              {lineNumber}
+            </div>
+          ))}
+        </div>
+        <div className="editor-textarea-stage">
+          {searchOpen ? (
+            <div className="editor-search-bar" role="search" aria-label="Editor search">
+              <input
+                ref={editorSearchInputRef}
+                className="editor-search-input"
+                type="text"
+                value={searchQuery}
+                onChange={(event) => handleSearchQueryChange(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    event.preventDefault();
+                    handleSearchNavigate(event.shiftKey ? -1 : 1);
+                    return;
+                  }
+
+                  if (event.key === "ArrowDown") {
+                    event.preventDefault();
+                    handleSearchNavigate(1);
+                    return;
+                  }
+
+                  if (event.key === "ArrowUp") {
+                    event.preventDefault();
+                    handleSearchNavigate(-1);
+                    return;
+                  }
+
+                  if (event.key === "Escape") {
+                    event.preventDefault();
+                    clearSearchState();
+                    window.setTimeout(() => editorAreaRef.current?.focus(), 0);
+                  }
+                }}
+                placeholder="Search"
+                spellCheck={false}
+              />
+              <span className="editor-search-count" aria-live="polite">
+                {matches.length > 0 && currentMatchIndex >= 0 ? `${currentMatchIndex + 1} / ${matches.length}` : `0 / ${matches.length}`}
+              </span>
+              <button
+                type="button"
+                className="editor-search-nav"
+                onClick={() => handleSearchNavigate(-1)}
+                disabled={!matches.length}
+                aria-label="Previous match"
+              >
+                ↑
+              </button>
+              <button
+                type="button"
+                className="editor-search-nav"
+                onClick={() => handleSearchNavigate(1)}
+                disabled={!matches.length}
+                aria-label="Next match"
+              >
+                ↓
+              </button>
+              <button
+                type="button"
+                className="editor-search-close"
+                onClick={() => {
+                  setSearchOpen(false);
+                  window.setTimeout(() => editorAreaRef.current?.focus(), 0);
+                }}
+                aria-label="Close search"
+              >
+                ×
+              </button>
+            </div>
+          ) : null}
+          <div
+            className="editor-highlight-layer"
+            aria-hidden="true"
+            style={{
+              transform: `translate(${-editorScroll.left}px, ${-editorScroll.top}px)`
+            }}
+            dangerouslySetInnerHTML={{ __html: editorOverlayHtml }}
+          />
+          <textarea
+            ref={editorAreaRef}
+            className="editor-area editor-area-mirror"
+            value={editValue}
+            onChange={(event) => {
+              if (selections.length > 0) {
+                return;
+              }
+              setEditValue(event.target.value);
+              syncActiveTabState({
+                editValue: event.target.value,
+                isDirty: event.target.value !== baseEditValue
+              });
+            }}
+            onScroll={handleEditorScroll}
+            onSelect={handleEditorSelect}
+            onKeyDown={handleEditorKeyDown}
+            onBeforeInput={handleEditorBeforeInput}
+            onPaste={handleEditorPaste}
+            spellCheck={false}
+          />
+        </div>
+      </div>
+    );
   }
 
   function renderMarkdownListNodes(nodes, keyPrefix = "list") {
@@ -2549,30 +3202,7 @@ function Pane({
                     }}
                   >
                     <div className="markdown-edit-split-pane markdown-edit-split-pane-editor">
-                      <div className="editor-shell">
-                        <div className="editor-line-numbers" ref={editorGutterRef} aria-hidden="true">
-                          {editorLineNumbers.map((lineNumber) => (
-                            <div key={lineNumber} className="editor-line-number">
-                              {lineNumber}
-                            </div>
-                          ))}
-                        </div>
-                        <textarea
-                          ref={editorAreaRef}
-                          className="editor-area"
-                          value={editValue}
-                          onChange={(event) => {
-                            setEditValue(event.target.value);
-                            syncActiveTabState({
-                              editValue: event.target.value,
-                              isDirty: event.target.value !== baseEditValue
-                            });
-                          }}
-                          onScroll={handleEditorScroll}
-                          onSelect={handleEditorSelect}
-                          spellCheck={false}
-                        />
-                      </div>
+                      {renderEditorShell()}
                     </div>
                     <button
                       type="button"
@@ -2620,30 +3250,7 @@ function Pane({
                     </div>
                   </div>
                 ) : (
-                  <div className="editor-shell">
-                    <div className="editor-line-numbers" ref={editorGutterRef} aria-hidden="true">
-                      {editorLineNumbers.map((lineNumber) => (
-                        <div key={lineNumber} className="editor-line-number">
-                          {lineNumber}
-                        </div>
-                      ))}
-                    </div>
-                    <textarea
-                      ref={editorAreaRef}
-                      className="editor-area"
-                      value={editValue}
-                      onChange={(event) => {
-                        setEditValue(event.target.value);
-                        syncActiveTabState({
-                          editValue: event.target.value,
-                          isDirty: event.target.value !== baseEditValue
-                        });
-                      }}
-                      onScroll={handleEditorScroll}
-                      onSelect={handleEditorSelect}
-                      spellCheck={false}
-                    />
-                  </div>
+                  renderEditorShell()
                 )
               ) : null}
             </div>

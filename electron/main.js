@@ -352,11 +352,13 @@ async function listDirectory(dirPath) {
     })
     .map(async (entry) => {
       const ignored = await isIgnoredPath(dirPath, entry.name);
+      const stats = await fs.stat(path.join(dirPath, entry.name));
       return {
         name: entry.name,
         path: path.join(dirPath, entry.name),
         type: entry.isDirectory() ? "directory" : "file",
-        ignored
+        ignored,
+        mtime: stats.mtimeMs || 0
       };
     }));
   return normalizedEntries;
