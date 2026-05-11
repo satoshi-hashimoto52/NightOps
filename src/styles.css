@@ -1464,7 +1464,7 @@ textarea {
 .markdown-preview {
   white-space: normal;
   color: var(--text-main);
-  line-height: 1.58;
+  line-height: 1.48;
   overflow-wrap: anywhere;
   word-break: break-word;
 }
@@ -1783,14 +1783,14 @@ textarea {
 .markdown-preview ul,
 .markdown-preview ol,
 .markdown-preview pre {
-  margin: 0 0 0.9em;
+  margin: 0 0 0.75em;
 }
 
 .markdown-preview table {
   width: 100%;
   border-collapse: collapse;
   border-spacing: 0;
-  margin: 0 0 0.9em;
+  margin: 0 0 0.75em;
   overflow: hidden;
   border-radius: 6px;
 }
@@ -1817,7 +1817,7 @@ textarea {
 
 .markdown-table-wrap {
   overflow: auto;
-  margin: 0 0 0.9em;
+  margin: 0 0 0.75em;
 }
 
 .markdown-table {
@@ -1861,11 +1861,11 @@ textarea {
 }
 
 .markdown-preview li + li {
-  margin-top: 0.2em;
+  margin-top: 0.15em;
 }
 
 .markdown-list-shell {
-  margin: 0 0 0.9em;
+  margin: 0 0 0.75em;
 }
 
 .markdown-list {
@@ -1878,7 +1878,7 @@ textarea {
 }
 
 .markdown-list-item + .markdown-list-item {
-  margin-top: 0.2em;
+  margin-top: 0.15em;
 }
 
 .markdown-list-item-content {
@@ -1893,7 +1893,7 @@ textarea {
 }
 
 .markdown-list-children {
-  margin-top: 0.2em;
+  margin-top: 0.15em;
 }
 
 .markdown-task-checkbox {
@@ -1909,7 +1909,7 @@ textarea {
 }
 
 .markdown-quote {
-  margin: 0 0 0.9em;
+  margin: 0 0 0.75em;
   padding: 8px 10px;
   border-left: 2px solid rgba(170, 176, 183, 0.7);
   border-radius: 6px;
@@ -1922,7 +1922,7 @@ textarea {
 }
 
 .markdown-callout {
-  margin: 0 0 0.9em;
+  margin: 0 0 0.75em;
   padding: 8px 10px;
   border-radius: 6px;
   border: 1px solid rgba(255, 255, 255, 0.08);
@@ -1974,8 +1974,8 @@ textarea {
 .markdown-heading {
   display: flex;
   align-items: flex-start;
-  gap: 6px;
-  margin: 1.1em 0 0.45em;
+  gap: 4px;
+  margin: 1em 0 0.4em;
   scroll-margin-top: 8px;
 }
 
@@ -2091,7 +2091,7 @@ textarea {
 
 .markdown-code-shell {
   position: relative;
-  margin: 0 0 0.9em;
+  margin: 0 0 0.75em;
 }
 
 .markdown-code-shell .markdown-code-block {
@@ -2139,7 +2139,7 @@ textarea {
 }
 
 .markdown-mermaid-shell {
-  margin: 0 0 0.9em;
+  margin: 0 0 0.75em;
   padding: 8px 10px;
   border: 1px dashed rgba(255, 255, 255, 0.14);
   border-radius: 6px;
