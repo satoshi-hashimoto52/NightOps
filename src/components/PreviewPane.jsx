@@ -22,7 +22,44 @@ const IMAGE_FILE_EXTENSIONS = new Set(["png", "jpg", "jpeg", "gif", "webp", "bmp
 const MARKDOWN_FILE_EXTENSIONS = new Set(["md", "markdown", "mdown", "mkdn"]);
 const MARKDOWN_FOLD_STORAGE_PREFIX = "nightops:markdown-fold";
 const MARKDOWN_OUTLINE_PANE_VISIBLE_KEY = "nightops:markdown:outline-pane-visible";
+const MARKDOWN_OUTLINE_WIDTH_KEY = "nightops:markdown:outline-width";
+const MARKDOWN_OUTLINE_MIN_WIDTH = 160;
+const MARKDOWN_OUTLINE_MAX_WIDTH = 600;
+const MARKDOWN_OUTLINE_DEFAULT_WIDTH = 240;
 
+function PenIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <path d="m14.5 5.5 4 4L9 19H5v-4Z" />
+      <path d="M13 7 17 11" />
+    </svg>
+  );
+}
+
+function FileTextIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8Z" />
+      <path d="M14 3v5h5" />
+      <path d="M9 13h6" />
+      <path d="M9 17h6" />
+      <path d="M9 9h2" />
+    </svg>
+  );
+}
+
+function ListIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <path d="M8 6h12" />
+      <path d="M8 12h12" />
+      <path d="M8 18h12" />
+      <path d="M4 6h.01" />
+      <path d="M4 12h.01" />
+      <path d="M4 18h.01" />
+    </svg>
+  );
+}
 hljs.registerLanguage("javascript", javascript);
 hljs.registerLanguage("json", json);
 hljs.registerLanguage("python", python);
@@ -579,6 +616,27 @@ function saveMarkdownOutlinePaneVisible(value) {
   }
 }
 
+function loadMarkdownOutlineWidth() {
+  try {
+    const raw = localStorage.getItem(MARKDOWN_OUTLINE_WIDTH_KEY);
+    const value = Number(raw);
+    if (!Number.isFinite(value)) {
+      return MARKDOWN_OUTLINE_DEFAULT_WIDTH;
+    }
+    return Math.min(MARKDOWN_OUTLINE_MAX_WIDTH, Math.max(MARKDOWN_OUTLINE_MIN_WIDTH, value));
+  } catch {
+    return MARKDOWN_OUTLINE_DEFAULT_WIDTH;
+  }
+}
+
+function saveMarkdownOutlineWidth(value) {
+  try {
+    localStorage.setItem(MARKDOWN_OUTLINE_WIDTH_KEY, String(value));
+  } catch {
+    return;
+  }
+}
+
 function getNormalizedEditValue(fileData) {
   if (!fileData) {
     return "";
@@ -670,14 +728,24 @@ function Pane({
   const [collapsedOutlineIds, setCollapsedOutlineIds] = useState(() => new Set());
   const [collapsedPreviewSectionIds, setCollapsedPreviewSectionIds] = useState(() => new Set());
   const [showMarkdownOutlinePane, setShowMarkdownOutlinePane] = useState(() => loadMarkdownOutlinePaneVisible());
+  const [outlineWidth, setOutlineWidth] = useState(() => loadMarkdownOutlineWidth());
   const [activeHeadingId, setActiveHeadingId] = useState("");
   const [editorSelection, setEditorSelection] = useState(null);
   const previewShellRef = useRef(null);
   const pdfWrapRef = useRef(null);
   const pdfPageUrlsRef = useRef([]);
+  const markdownOutlineLayoutRef = useRef(null);
   const editorGutterRef = useRef(null);
   const markdownSplitRef = useRef(null);
   const markdownSplitDragRef = useRef({ dragging: false });
+  const markdownOutlineResizeRef = useRef({
+    resizing: false,
+    pointerId: null,
+    startX: 0,
+    startWidth: MARKDOWN_OUTLINE_DEFAULT_WIDTH,
+    containerLeft: 0
+  });
+  const markdownOutlineResizeRafRef = useRef(0);
   const openTabs = pane?.tabs || [];
   const activeTabPath = pane?.activeTabPath || "";
   const activeTab = openTabs.find((tab) => tab.path === activeTabPath) || null;
@@ -698,6 +766,59 @@ function Pane({
     () => Array.from({ length: editorLineCount }, (_, index) => index + 1),
     [editorLineCount]
   );
+
+  useEffect(() => {
+    saveMarkdownOutlineWidth(outlineWidth);
+  }, [outlineWidth]);
+
+  useEffect(() => {
+    function handlePointerMove(event) {
+      const state = markdownOutlineResizeRef.current;
+      if (!state.resizing) {
+        return;
+      }
+
+      const nextWidth = Math.min(
+        MARKDOWN_OUTLINE_MAX_WIDTH,
+        Math.max(MARKDOWN_OUTLINE_MIN_WIDTH, event.clientX - state.containerLeft)
+      );
+
+      if (markdownOutlineResizeRafRef.current) {
+        cancelAnimationFrame(markdownOutlineResizeRafRef.current);
+      }
+
+      markdownOutlineResizeRafRef.current = requestAnimationFrame(() => {
+        setOutlineWidth(nextWidth);
+      });
+    }
+
+    function stopResize() {
+      const state = markdownOutlineResizeRef.current;
+      if (!state.resizing) {
+        return;
+      }
+
+      state.resizing = false;
+      state.pointerId = null;
+      if (markdownOutlineResizeRafRef.current) {
+        cancelAnimationFrame(markdownOutlineResizeRafRef.current);
+        markdownOutlineResizeRafRef.current = 0;
+      }
+    }
+
+    window.addEventListener("pointermove", handlePointerMove);
+    window.addEventListener("pointerup", stopResize);
+    window.addEventListener("pointercancel", stopResize);
+    return () => {
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", stopResize);
+      window.removeEventListener("pointercancel", stopResize);
+      if (markdownOutlineResizeRafRef.current) {
+        cancelAnimationFrame(markdownOutlineResizeRafRef.current);
+        markdownOutlineResizeRafRef.current = 0;
+      }
+    };
+  }, []);
 
   const markdownOutlineHighlightIds = useMemo(() => {
     if (!activeHeadingId) {
@@ -1816,6 +1937,30 @@ function Pane({
     });
   }
 
+  function handleMarkdownOutlineResizeStart(event) {
+    if (event.button !== 0) {
+      return;
+    }
+
+    const layout = markdownOutlineLayoutRef.current;
+    if (!layout) {
+      return;
+    }
+
+    const rect = layout.getBoundingClientRect();
+    markdownOutlineResizeRef.current = {
+      resizing: true,
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startWidth: outlineWidth,
+      containerLeft: rect.left
+    };
+
+    event.preventDefault();
+    event.stopPropagation();
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+  }
+
   function renderMarkdownListNodes(nodes, keyPrefix = "list") {
     if (!nodes.length) {
       return null;
@@ -2118,34 +2263,50 @@ function Pane({
                 {tab.isDirty ? <span className="preview-tab-dirty" aria-hidden="true">●</span> : null}
               </span>
               {isActivePane && isActive && showEditButton ? (
-                <span className="preview-active-tab-actions">
-                  <button
-                    type="button"
-                    className={`preview-mode-button ${mode === "preview" ? "action-edit active" : "action-preview"}`}
-                    onClick={(event) => {
-                      event.preventDefault();
-                      event.stopPropagation();
-                      setMode((current) => (current === "preview" ? "edit" : "preview"));
-                    }}
-                    >
-                      {mode === "preview" ? "Edit" : "Preview"}
-                    </button>
-                  {isMarkdown ? (
+                <span className="preview-active-tab-actions icon-area">
+                  {mode === "edit" ? (
                     <button
                       type="button"
-                      className={`markdown-outline-toggle-button markdown-outline-toggle${showMarkdownOutlinePane ? " active" : ""}`}
-                      aria-pressed={showMarkdownOutlinePane}
+                      className="tab-icon-button icon-btn active"
+                      aria-label="Preview"
+                      title="Preview"
                       onClick={(event) => {
                         event.preventDefault();
                         event.stopPropagation();
-                        setShowMarkdownOutlinePane((current) => !current);
+                        setMode("preview");
                       }}
-                      title={showMarkdownOutlinePane ? "Hide outline pane" : "Show outline pane"}
                     >
-                      <span className="markdown-outline-toggle-icon" aria-hidden="true">☰</span>
-                      <span className="markdown-outline-toggle-label">Outline</span>
+                      <FileTextIcon />
                     </button>
-                  ) : null}
+                  ) : (
+                    <button
+                      type="button"
+                      className="tab-icon-button icon-btn active"
+                      aria-label="Edit"
+                      title="Edit"
+                      onClick={(event) => {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        setMode("edit");
+                      }}
+                    >
+                      <PenIcon />
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    className={`tab-icon-button icon-btn markdown-outline-toggle-button${showMarkdownOutlinePane ? " active" : ""}`}
+                    aria-label="Outline"
+                    aria-pressed={showMarkdownOutlinePane}
+                    title="Outline"
+                    onClick={(event) => {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      setShowMarkdownOutlinePane((current) => !current);
+                    }}
+                  >
+                    <ListIcon />
+                  </button>
                   {showSaveButton ? (
                     <button
                       type="button"
@@ -2338,18 +2499,39 @@ function Pane({
             <div className="preview-text-stage">
               {mode === "preview" ? (
                 isMarkdown ? (
-                  <div className={`markdown-preview-layout${showMarkdownOutlinePane ? "" : " markdown-outline-hidden"}`}>
+                  <div
+                    ref={markdownOutlineLayoutRef}
+                    className={`markdown-preview-layout${showMarkdownOutlinePane ? "" : " markdown-outline-hidden"}`}
+                    style={
+                      showMarkdownOutlinePane
+                        ? { gridTemplateColumns: `${outlineWidth}px 4px minmax(0, 1fr)` }
+                        : { gridTemplateColumns: "minmax(0, 1fr)" }
+                    }
+                  >
                     {showMarkdownOutlinePane ? (
-                      <aside className="markdown-outline" aria-label="Markdown outline">
-                        <div className="markdown-outline-title">Outline</div>
-                        {markdownDocument.headings.length > 0 ? (
-                          <div className="markdown-outline-list">
-                            {renderMarkdownOutlineNodes(markdownOutlineTree)}
-                          </div>
-                        ) : (
-                          <div className="markdown-outline-empty">No headings</div>
-                        )}
-                      </aside>
+                      <>
+                        <aside
+                          className="markdown-outline"
+                          aria-label="Markdown outline"
+                          style={{ width: `${outlineWidth}px`, flex: "0 0 auto" }}
+                        >
+                          <div className="markdown-outline-title">Outline</div>
+                          {markdownDocument.headings.length > 0 ? (
+                            <div className="markdown-outline-list">
+                              {renderMarkdownOutlineNodes(markdownOutlineTree)}
+                            </div>
+                          ) : (
+                            <div className="markdown-outline-empty">No headings</div>
+                          )}
+                        </aside>
+                        <div
+                          className="outline-divider"
+                          role="separator"
+                          aria-orientation="vertical"
+                          aria-label="Resize outline panel"
+                          onPointerDown={handleMarkdownOutlineResizeStart}
+                        />
+                      </>
                     ) : null}
                     <div
                       className={`code-preview markdown-preview markdown-preview-scroll${showMarkdownOutlinePane ? "" : " markdown-preview-fullwidth"}`}
@@ -2408,18 +2590,39 @@ function Pane({
                       onPointerDown={handleMarkdownSplitPointerDown}
                     />
                     <div className="markdown-edit-split-pane markdown-edit-split-pane-preview">
-                      <div className={`markdown-preview-layout${showMarkdownOutlinePane ? "" : " markdown-outline-hidden"}`}>
+                      <div
+                        ref={markdownOutlineLayoutRef}
+                        className={`markdown-preview-layout${showMarkdownOutlinePane ? "" : " markdown-outline-hidden"}`}
+                        style={
+                          showMarkdownOutlinePane
+                            ? { gridTemplateColumns: `${outlineWidth}px 4px minmax(0, 1fr)` }
+                            : { gridTemplateColumns: "minmax(0, 1fr)" }
+                        }
+                      >
                         {showMarkdownOutlinePane ? (
-                          <aside className="markdown-outline" aria-label="Markdown outline">
-                            <div className="markdown-outline-title">Outline</div>
-                            {markdownDocument.headings.length > 0 ? (
-                              <div className="markdown-outline-list">
-                                {renderMarkdownOutlineNodes(markdownOutlineTree)}
-                              </div>
-                            ) : (
-                              <div className="markdown-outline-empty">No headings</div>
-                            )}
-                          </aside>
+                          <>
+                            <aside
+                              className="markdown-outline"
+                              aria-label="Markdown outline"
+                              style={{ width: `${outlineWidth}px`, flex: "0 0 auto" }}
+                            >
+                              <div className="markdown-outline-title">Outline</div>
+                              {markdownDocument.headings.length > 0 ? (
+                                <div className="markdown-outline-list">
+                                  {renderMarkdownOutlineNodes(markdownOutlineTree)}
+                                </div>
+                              ) : (
+                                <div className="markdown-outline-empty">No headings</div>
+                              )}
+                            </aside>
+                            <div
+                              className="outline-divider"
+                              role="separator"
+                              aria-orientation="vertical"
+                              aria-label="Resize outline panel"
+                              onPointerDown={handleMarkdownOutlineResizeStart}
+                            />
+                          </>
                         ) : null}
                         <div
                           className={`code-preview markdown-preview markdown-preview-scroll${showMarkdownOutlinePane ? "" : " markdown-preview-fullwidth"}`}

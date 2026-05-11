@@ -1237,6 +1237,7 @@ textarea {
   justify-content: center;
   border-radius: 4px;
   color: rgba(230, 233, 238, 0.72);
+  cursor: default;
   transition:
     background 0.15s ease,
     color 0.15s ease;
@@ -1245,6 +1246,7 @@ textarea {
 .preview-tab-close:hover {
   background: rgba(255, 255, 255, 0.08);
   color: var(--text-main);
+  cursor: default;
 }
 
 .preview-tab-menu {
@@ -1341,57 +1343,65 @@ textarea {
   margin-left: auto;
 }
 
-.preview-active-tab-actions {
+.preview-active-tab-actions,
+.preview-active-tab-actions.icon-area {
   display: inline-flex;
   align-items: center;
-  gap: 3px;
+  gap: 4px;
   flex: 0 0 auto;
   pointer-events: auto;
+  cursor: default;
 }
 
-.preview-active-tab-actions .preview-mode-button,
-.preview-active-tab-actions .save-button {
-  height: 22px;
-  padding: 0 7px;
-  border-radius: 6px;
-  font-size: 10px;
-  line-height: 1;
-}
-
-.preview-active-tab-actions .markdown-outline-toggle-button {
+.preview-active-tab-actions .tab-icon-button,
+.preview-active-tab-actions .icon-btn {
   display: inline-flex;
   align-items: center;
-  gap: 3px;
+  justify-content: center;
+  width: 18px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: #888;
+  flex: 0 0 auto;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 1;
+  transition: color 0.15s ease, opacity 0.15s ease;
+}
+
+.preview-active-tab-actions .tab-icon-button:hover,
+.preview-active-tab-actions .icon-btn:hover {
+  color: #ccc;
+}
+
+.preview-active-tab-actions .tab-icon-button.active,
+.preview-active-tab-actions .icon-btn.active {
+  color: #4da3ff;
+}
+
+.preview-active-tab-actions .tab-icon-button svg,
+.preview-active-tab-actions .icon-btn svg {
+  width: 14px;
+  height: 14px;
+  stroke: currentColor;
+  stroke-width: 1.75;
+  fill: none;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.preview-active-tab-actions .save-button {
+  display: inline-flex;
+  align-items: center;
   height: 22px;
   padding: 0 6px;
   border-radius: 6px;
   font-size: 10px;
   line-height: 1;
   white-space: nowrap;
-}
-
-.preview-active-tab-actions .markdown-outline-toggle-button.active {
-  border-color: rgba(245, 197, 66, 0.45);
-  background: rgba(54, 44, 20, 0.78);
-  color: #fff4d4;
-}
-
-.markdown-outline-toggle-icon {
-  display: inline-block;
-  font-size: 11px;
-  line-height: 1;
-}
-
-.preview-active-tab-actions .preview-mode-button.action-edit {
-  background: rgba(28, 52, 78, 0.8);
-  border-color: rgba(104, 172, 255, 0.55);
-  color: #d8ebff;
-}
-
-.preview-active-tab-actions .preview-mode-button.action-preview {
-  background: rgba(54, 44, 20, 0.78);
-  border-color: rgba(245, 197, 66, 0.5);
-  color: #fff4d4;
 }
 
 .preview-active-tab-actions .save-button.action-save {
@@ -1510,8 +1520,8 @@ textarea {
 
 .markdown-preview-layout {
   display: grid;
-  grid-template-columns: 180px minmax(0, 1fr);
-  gap: 10px;
+  grid-template-columns: 180px 4px minmax(0, 1fr);
+  gap: 0;
   min-height: 0;
   flex: 1;
 }
@@ -1539,6 +1549,17 @@ textarea {
   border: 1px solid rgba(255, 255, 255, 0.08);
   border-radius: 10px;
   background: rgba(27, 31, 36, 0.42);
+}
+
+.outline-divider {
+  width: 4px;
+  cursor: col-resize;
+  background: transparent;
+  align-self: stretch;
+}
+
+.outline-divider:hover {
+  background: rgba(255, 255, 255, 0.1);
 }
 
 .markdown-outline-title {
@@ -1569,12 +1590,12 @@ textarea {
   width: 100%;
   display: flex;
   align-items: center;
-  gap: 3px;
+  gap: 2px;
   border: 0;
   border-radius: 7px;
   background: transparent;
   color: var(--text-main);
-  padding: 0 4px 0 0;
+  padding: 0 2px 0 0;
   min-height: 22px;
   text-align: left;
   font-size: 10px;
@@ -1602,7 +1623,7 @@ textarea {
   border: 0;
   background: transparent;
   color: inherit;
-  padding: 6px 6px 6px 4px;
+  padding: 6px 6px 6px 0;
   text-align: left;
   font: inherit;
 }
@@ -1623,7 +1644,7 @@ textarea {
 }
 
 .markdown-outline-fold-toggle {
-  margin-left: 2px;
+  margin-left: 0;
 }
 
 .markdown-outline-fold-toggle:hover,
@@ -2127,21 +2148,6 @@ textarea {
   border-radius: 8px;
   background: rgba(12, 15, 20, 0.9);
   border: 1px solid rgba(255, 255, 255, 0.06);
-}
-
-.preview-actions button:hover,
-.ghost-button:hover,
-.launch-button:hover,
-.save-button:hover,
-.preview-active-tab-actions .markdown-outline-toggle-button:hover {
-  transform: translateY(-1px);
-  border-color: rgba(245, 197, 66, 0.45);
-  background: rgba(28, 33, 43, 0.76);
-}
-
-.preview-active-tab-actions .markdown-outline-toggle-button:hover {
-  background: rgba(54, 44, 20, 0.85);
-  color: #fff4d4;
 }
 
 .preview-actions .active,

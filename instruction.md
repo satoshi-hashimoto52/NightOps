@@ -1,131 +1,144 @@
-outline toggle を tab action 側へ移動した結果、
-
-[ Preview ] [ Edit ] [ ☰ Outline ]
-
-の横幅によって、
-ファイル名表示領域が圧迫されています。
-
-タブタイトル（ファイル名）が優先して見えるよう、
-tab layout を調整してください。
-
-目的:
-- ファイル名の視認性維持
-- action button 群による圧迫防止
-- AIドキュメント作業時の識別性向上
+Outlineとテキスト表示領域の間をドラッグで伸縮できるようにしてください。
+既存のPane分割とは独立して実装すること。
 
 ---
 
-# 要件
-
-現在:
-
-[ FileName.md ][ Preview ][ Edit ][ ☰ Outline ]
-
-action 側が固定幅寄りになっており、
-ファイル名領域が圧迫されています。
-
-以下へ調整してください。
+【目的】
+- Outline幅を自由に調整
+- 長い構造や本文を見やすくする
+- IDE相当の操作性にする
 
 ---
 
-# レイアウト方針
+■ ① レイアウト構造変更
 
-## ファイル名領域を優先
+現在：
 
-- file tab title を flex-grow
-- action buttons は shrink 最小化
+[Outline][Text]
 
-推奨:
-
-- title: flex: 1 1 auto
-- actions: flex: 0 0 auto
-
----
-
-# ボタンサイズ縮小
-
-Preview / Edit / Outline は
-必要最小サイズへ調整。
-
-推奨:
-
-- padding 縮小
-- gap 縮小
-- icon + short label
-- height 統一
-
----
-
-# 長いファイル名
-
-ファイル名領域は:
-
-- overflow hidden
-- text-overflow ellipsis
-- white-space nowrap
-
-を適用。
-
-ただし可能な限り表示幅を確保してください。
-
----
-
-# 優先順位
-
-表示優先度:
-
-1. ファイル名
-2. Edit
-3. Preview
-4. Outline
-
-outline は最悪 icon only へ縮退可能。
-
----
-
-# レスポンシブ
-
-横幅不足時:
-
-☰ Outline
 ↓
-☰
 
-へ自動縮退しても良いです。
+変更：
 
----
-
-# 推奨構造
-
-.tab-header
-  ├─ .tab-title
-  └─ .tab-actions
-
-.tab-title
-  flex: 1 1 auto
-  min-width: 0
-
-.tab-actions
-  flex: 0 0 auto
+[Outline][Divider][Text]
 
 ---
 
-# 追加推奨
+■ ② 状態追加
 
-可能なら:
-
-hover 時に full file path tooltip 表示。
+const [outlineWidth, setOutlineWidth] = useState(240)
 
 ---
 
-# 確認項目
+■ ③ 幅制御
 
-- ファイル名表示幅が増えている
-- 長いmd名でも見やすい
-- ボタン群が右寄せされている
-- 横幅不足時に崩れない
-- build 通過
+Outline：
 
-変更対象:
-- src/components/PreviewPane.jsx
-- src/styles.css
+width: outlineWidth px
+flex: 0 0 auto
+
+Text：
+
+flex: 1
+
+---
+
+■ ④ Divider追加
+
+<div className="outline-divider" />
+
+---
+
+■ ⑤ ドラッグ処理
+
+mousedown：
+
+isResizing = true
+
+pointermove：
+
+newWidth = mouseX - containerLeft
+
+setOutlineWidth(newWidth)
+
+---
+
+■ ⑥ 制限（重要）
+
+outlineWidth の範囲：
+
+min: 160px
+max: 600px
+
+---
+
+■ ⑦ pointerイベント（重要）
+
+window にバインド：
+
+pointermove
+pointerup
+
+---
+
+■ ⑧ CSS
+
+.outline-divider {
+  width: 4px;
+  cursor: col-resize;
+  background: transparent;
+}
+
+.outline-divider:hover {
+  background: rgba(255,255,255,0.1);
+}
+
+---
+
+■ ⑨ スクロールとの分離
+
+- Outline は独立スクロール
+- Text も独立スクロール
+
+---
+
+■ ⑩ 保存（任意）
+
+localStorage に保存：
+
+outlineWidth
+
+---
+
+■ ⑪ Pane分割との独立性
+
+- Pane分割の splitRatio と混ぜない
+- 各Pane内で独立管理
+
+---
+
+■ ⑫ パフォーマンス
+
+- requestAnimationFrame 推奨
+- setState連打防止
+
+---
+
+■ 禁止
+
+- flex:1 のまま width変更
+- transformで位置調整
+- 親レイアウト変更
+
+---
+
+■ ゴール
+
+- Outlineと本文の境界をドラッグで調整可能
+- 他の分割（Pane）と干渉しない
+
+---
+
+■ 出力
+
+- 変更箇所のみ提示
