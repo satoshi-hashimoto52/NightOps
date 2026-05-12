@@ -101,11 +101,11 @@ textarea {
 
 .window-drag-bar {
   position: relative;
-  height: 28px;
+  height: 22px;
   display: grid;
   grid-template-columns: max-content minmax(0, 1fr) max-content max-content;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   padding: 0 6px;
   color: #cfd6e6;
   font-size: 12px;
@@ -117,7 +117,7 @@ textarea {
 .top-status-strip {
   display: inline-flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   min-width: 0;
   white-space: nowrap;
   font-size: 12px;
@@ -141,7 +141,7 @@ textarea {
   justify-self: center;
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 4px;
   max-width: 100%;
   min-width: 0;
   -webkit-app-region: no-drag;
@@ -280,11 +280,11 @@ textarea {
   text-overflow: ellipsis;
   white-space: nowrap;
   opacity: 0.78;
-  height: 20px;
+  height: 18px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  padding: 0 8px;
+  padding: 0 7px;
   border-radius: 6px;
   background: rgba(34, 39, 47, 0.72);
   border: 1px solid rgba(52, 58, 66, 0.84);
