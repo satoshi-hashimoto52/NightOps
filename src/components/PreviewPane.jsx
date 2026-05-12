@@ -295,7 +295,17 @@ function findTextMatches(text, query, limit = 1000) {
   return matches;
 }
 
-function buildEditorHighlightHtml(text, matches, currentMatchIndex, selections) {
+function findNextMatch(text, query, fromIndex) {
+  const sourceText = String(text ?? "");
+  const normalizedQuery = String(query ?? "");
+  if (!normalizedQuery) {
+    return -1;
+  }
+
+  return sourceText.indexOf(normalizedQuery, Math.max(0, Number(fromIndex) || 0));
+}
+
+function buildEditorHighlightHtml(text, matches, currentMatchIndex, selections, primarySelectionIndex = -1) {
   const sourceText = String(text ?? "");
   if (!sourceText) {
     return "";
@@ -318,7 +328,14 @@ function buildEditorHighlightHtml(text, matches, currentMatchIndex, selections) 
   });
 
   const points = Array.from(boundaries).sort((a, b) => a - b);
-  const decorations = [...activeSelections.map((range) => ({ ...range, kind: "selection" })), ...activeMatches.map((range) => ({ ...range, kind: "match" }))];
+  const decorations = [
+    ...activeSelections.map((range, index) => ({
+      ...range,
+      kind: "selection",
+      primary: index === primarySelectionIndex
+    })),
+    ...activeMatches.map((range) => ({ ...range, kind: "match" }))
+  ];
 
   let html = "";
 
@@ -355,6 +372,11 @@ function buildEditorHighlightHtml(text, matches, currentMatchIndex, selections) 
 
     if (hasSelection) {
       segmentClasses.push("selection-multi");
+      segmentClasses.push("multi");
+      if (decorations.some((decoration) => decoration.kind === "selection" && decoration.start <= start && decoration.end > start && decoration.primary)) {
+        segmentClasses.push("primary-selection");
+        segmentClasses.push("primary");
+      }
     }
 
     const escaped = escapeHtml(segment);
@@ -875,8 +897,12 @@ function createEmptyTabState(path, name) {
     path,
     name,
     fileData: null,
+    isDirty: false,
+    content: "",
     editValue: "",
     baseEditValue: "",
+    undoStack: [],
+    redoStack: [],
     mode: "preview",
     previewFontScale: 1,
     markdownSplitRatio: 0.52,
@@ -954,6 +980,8 @@ function Pane({
   const [matches, setMatches] = useState([]);
   const [currentMatchIndex, setCurrentMatchIndex] = useState(-1);
   const [selections, setSelections] = useState([]);
+  const [primarySelectionIndex, setPrimarySelectionIndex] = useState(-1);
+  const [lastQuery, setLastQuery] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
   const previewShellRef = useRef(null);
   const pdfWrapRef = useRef(null);
@@ -997,8 +1025,8 @@ function Pane({
 
   const editorOverlayHtml = useMemo(() => {
     const selectedRanges = selections.length > 0 ? selections : editorSelection?.start !== editorSelection?.end ? [editorSelection] : [];
-    return buildEditorHighlightHtml(editValue, matches, currentMatchIndex, selectedRanges);
-  }, [currentMatchIndex, editValue, editorSelection, matches, selections]);
+    return buildEditorHighlightHtml(editValue, matches, currentMatchIndex, selectedRanges, primarySelectionIndex);
+  }, [currentMatchIndex, editValue, editorSelection, matches, primarySelectionIndex, selections]);
 
   useEffect(() => {
     saveMarkdownOutlineWidth(outlineWidth);
@@ -1009,10 +1037,23 @@ function Pane({
     setMatches([]);
     setCurrentMatchIndex(-1);
     setSelections([]);
+    setPrimarySelectionIndex(-1);
+    setLastQuery("");
     setSearchOpen(false);
     setEditorSelection(null);
     setEditorScroll({ top: 0, left: 0 });
   }, [activeTabPath]);
+
+  useEffect(() => {
+    if (!activeTab || activeTab.path !== activeTabPath) {
+      return;
+    }
+
+    const nextContent = typeof activeTab.content === "string" ? activeTab.content : "";
+    if (nextContent !== editValue) {
+      setEditValue(nextContent);
+    }
+  }, [activeTabPath, activeTab?.content]);
 
   useEffect(() => {
     const timerId = window.setTimeout(() => {
@@ -1241,6 +1282,7 @@ function Pane({
       path: activeTabPath,
       name: activeTabName,
       fileData,
+      content: nextOverrides.content ?? editValue,
       editValue,
       baseEditValue,
       mode,
@@ -1272,7 +1314,8 @@ function Pane({
           ? {
               ...tab,
               name: activeTabName || tab.name,
-              isDirty: Boolean(nextState.fileData?.editable && nextState.editValue !== nextState.baseEditValue)
+              content: nextState.content ?? nextState.editValue,
+              isDirty: Boolean(nextState.isDirty)
             }
           : tab
       )
@@ -1289,7 +1332,7 @@ function Pane({
     });
 
     setFileData(nextState.fileData || null);
-    setEditValue(nextState.editValue || "");
+    setEditValue(nextState.content ?? nextState.editValue ?? "");
     setBaseEditValue(nextState.baseEditValue || "");
     setMode(nextState.mode || "preview");
     setPreviewFontScale(Number(nextState.previewFontScale) || 1);
@@ -1409,6 +1452,7 @@ function Pane({
     });
     if (selections.length > 0) {
       setSelections([]);
+      setPrimarySelectionIndex(-1);
     }
   }
 
@@ -1418,6 +1462,7 @@ function Pane({
     setMatches([]);
     setCurrentMatchIndex(-1);
     setSelections([]);
+    setPrimarySelectionIndex(-1);
     setEditorSelection(null);
   }
 
@@ -1430,6 +1475,46 @@ function Pane({
     };
   }
 
+  function getWordRangeAtCursor() {
+    const sourceText = String(editValue ?? "");
+    const target = editorAreaRef.current;
+    if (!target || sourceText.length === 0) {
+      return null;
+    }
+
+    const cursor = clampEditorPosition(target.selectionStart ?? 0, sourceText.length);
+    const isWordChar = (character) => /[A-Za-z0-9_$]/.test(character);
+    const currentChar = sourceText[cursor] || "";
+    const previousChar = cursor > 0 ? sourceText[cursor - 1] : "";
+
+    if (!isWordChar(currentChar) && !isWordChar(previousChar)) {
+      return null;
+    }
+
+    let start = cursor;
+    if (!isWordChar(currentChar) && isWordChar(previousChar)) {
+      start = cursor - 1;
+    }
+    while (start > 0 && isWordChar(sourceText[start - 1])) {
+      start -= 1;
+    }
+
+    let end = cursor;
+    if (!isWordChar(currentChar) && isWordChar(previousChar)) {
+      end = cursor;
+    } else {
+      while (end < sourceText.length && isWordChar(sourceText[end])) {
+        end += 1;
+      }
+    }
+
+    if (start >= end) {
+      return null;
+    }
+
+    return { start, end };
+  }
+
   function focusEditorSelection(range) {
     const target = editorAreaRef.current;
     if (!target) {
@@ -1438,8 +1523,27 @@ function Pane({
 
     target.dataset.ignoreSelect = "1";
     try {
+      editorSearchInputRef.current?.blur?.();
       target.focus();
       target.setSelectionRange(range.start, range.end);
+      const beforeSelection = String(editValue ?? "").slice(0, range.start);
+      const lineIndex = beforeSelection ? beforeSelection.split(/\r\n|\r|\n/).length - 1 : 0;
+      const computedStyle = window.getComputedStyle(target);
+      const lineHeight = Number.parseFloat(computedStyle.lineHeight) || 18;
+      const paddingTop = Number.parseFloat(computedStyle.paddingTop) || 0;
+      const nextScrollTop = Math.max(0, Math.floor(lineIndex * lineHeight - target.clientHeight * 0.35 + paddingTop));
+      target.scrollTop = nextScrollTop;
+      if (editorGutterRef.current) {
+        editorGutterRef.current.scrollTop = nextScrollTop;
+      }
+      setEditorScroll((current) => ({
+        top: nextScrollTop,
+        left: current.left
+      }));
+      syncActiveTabState({
+        editorScrollTop: nextScrollTop,
+        editorScrollLeft: editorScroll.left
+      });
     } catch {
       // Ignore selection failures for unsupported browser states.
     }
@@ -1462,6 +1566,29 @@ function Pane({
     focusEditorSelection(match);
   }
 
+  useEffect(() => {
+    if (!searchOpen) {
+      return;
+    }
+
+    const query = searchQuery.trim();
+    if (!query || matches.length === 0) {
+      return;
+    }
+
+    const nextIndex = currentMatchIndex >= 0 && currentMatchIndex < matches.length ? currentMatchIndex : 0;
+    const nextMatch = matches[nextIndex];
+    if (!nextMatch) {
+      return;
+    }
+
+    if (editorSelection?.start === nextMatch.start && editorSelection?.end === nextMatch.end) {
+      return;
+    }
+
+    selectMatchAtIndex(nextIndex);
+  }, [currentMatchIndex, editorSelection?.end, editorSelection?.start, matches, searchOpen, searchQuery]);
+
   function handleSearchNavigate(delta) {
     if (!matches.length) {
       return;
@@ -1475,6 +1602,7 @@ function Pane({
     setSearchQuery(value);
     setCurrentMatchIndex(0);
     setSelections([]);
+    setPrimarySelectionIndex(-1);
     setEditorSelection(null);
   }
 
@@ -1490,70 +1618,334 @@ function Pane({
     return selectedText;
   }
 
-  function handleCommandD() {
-    const selectedRange = getEditorSelectionRange();
-    const selectedText = editValue.slice(selectedRange.start, selectedRange.end);
-    const query = searchQuery.trim() || selectedText.trim();
+  function handleAddNextSelection(textarea, reverse = false) {
+    const sourceValue = String(textarea?.value ?? editValue ?? "");
+    const selectedRange = {
+      start: Number(textarea?.selectionStart ?? 0),
+      end: Number(textarea?.selectionEnd ?? 0)
+    };
+    const selectedText = sourceValue.slice(selectedRange.start, selectedRange.end);
+    const currentSelections = selections.length > 0 ? normalizeEditorRanges(selections, sourceValue.length) : [];
+    const nextSelections = [...currentSelections];
+
+    if (nextSelections.length === 0) {
+      const initialRange = selectedText ? selectedRange : getWordRangeAtCursor();
+      if (!initialRange) {
+        return;
+      }
+
+      const initialText = sourceValue.slice(initialRange.start, initialRange.end);
+      if (!initialText) {
+        return;
+      }
+
+      setSelections([initialRange]);
+      setPrimarySelectionIndex(0);
+      setLastQuery(initialText);
+      setEditorSelection(initialRange);
+      textarea?.setSelectionRange?.(initialRange.start, initialRange.end);
+      focusEditorSelection(initialRange);
+      return;
+    }
+
+    const query = selectedText || lastQuery;
     if (!query) {
       return;
     }
 
-    const nextMatches = findTextMatches(editValue, query, 1000);
-    const nextSelections = selections.length > 0 ? [...selections] : [];
+    const selectedKeys = new Set(nextSelections.map(rangeKey));
+    const basePosition = reverse ? nextSelections[0].start : nextSelections[nextSelections.length - 1].end;
+    let searchFrom = reverse ? 0 : basePosition;
+    let nextSelection = null;
 
-    if (selectedText) {
-      const selectedKey = rangeKey(selectedRange);
-      if (!nextSelections.some((range) => rangeKey(range) === selectedKey)) {
-        nextSelections.push(selectedRange);
+    while (searchFrom >= 0 && searchFrom <= sourceValue.length) {
+      const nextIndex = reverse
+        ? sourceValue.lastIndexOf(query, Math.max(0, selectedRange.start - 1))
+        : findNextMatch(sourceValue, query, searchFrom);
+
+      if (nextIndex === -1) {
+        break;
       }
-    } else if (nextSelections.length === 0 && nextMatches[currentMatchIndex]) {
-      nextSelections.push(nextMatches[currentMatchIndex]);
-    } else if (nextSelections.length === 0 && nextMatches[0]) {
-      nextSelections.push(nextMatches[0]);
+
+      const candidate = { start: nextIndex, end: nextIndex + query.length };
+      const candidateKey = rangeKey(candidate);
+      if (!selectedKeys.has(candidateKey)) {
+        nextSelection = candidate;
+        break;
+      }
+
+      searchFrom = reverse ? nextIndex - 1 : nextIndex + Math.max(1, query.length);
     }
 
-    const selectedKeys = new Set(nextSelections.map(rangeKey));
-    const basePosition = nextSelections.length > 0 ? nextSelections[nextSelections.length - 1].end : selectedRange.end;
-    const nextMatchIndex = findNextEditableMatchIndex(nextMatches, basePosition, selectedKeys);
-    if (nextMatchIndex === -1) {
+    if (!nextSelection) {
       return;
     }
 
-    const nextSelection = nextMatches[nextMatchIndex];
     nextSelections.push(nextSelection);
-    setSelections(normalizeEditorRanges(nextSelections, editValue.length));
-    setSearchOpen(true);
-    if (!searchQuery.trim() && query) {
-      setSearchQuery(query);
-      setMatches(nextMatches);
-    }
-    setCurrentMatchIndex(nextMatchIndex);
+    setSelections(normalizeEditorRanges(nextSelections, sourceValue.length));
+    setPrimarySelectionIndex(nextSelections.length - 1);
+    setLastQuery(query);
     setEditorSelection(nextSelection);
+    textarea?.setSelectionRange?.(nextSelection.start, nextSelection.end);
     focusEditorSelection(nextSelection);
   }
 
-  function handleEditorKeyDown(event) {
-    if (event.metaKey && !event.altKey && !event.ctrlKey && event.key.toLowerCase() === "f") {
-      event.preventDefault();
-      setSearchOpen(true);
-      const selectedText = seedSearchFromSelection();
-      if (!selectedText && searchQuery.trim()) {
-        window.setTimeout(() => editorSearchInputRef.current?.select(), 0);
+  function getTextDiff(oldText, newText) {
+    let start = 0;
+
+    while (start < oldText.length && start < newText.length && oldText[start] === newText[start]) {
+      start += 1;
+    }
+
+    let oldEnd = oldText.length;
+    let newEnd = newText.length;
+
+    while (oldEnd > start && newEnd > start && oldText[oldEnd - 1] === newText[newEnd - 1]) {
+      oldEnd -= 1;
+      newEnd -= 1;
+    }
+
+    return {
+      start,
+      removedText: oldText.slice(start, oldEnd),
+      insertedText: newText.slice(start, newEnd)
+    };
+  }
+
+  function applyDiffToSelections(oldText, nextSelections, diff) {
+    let nextText = oldText;
+    const sortedSelections = [...nextSelections].sort((a, b) => b.start - a.start);
+
+    for (const range of sortedSelections) {
+      nextText = `${nextText.slice(0, range.start)}${diff.insertedText}${nextText.slice(range.end)}`;
+    }
+
+    return nextText;
+  }
+
+  function getEditorHistoryState() {
+    const currentState = tabStateRef.current.get(activeTabPath) || createEmptyTabState(activeTabPath, activeTabName);
+    return {
+      undoStack: Array.isArray(currentState.undoStack) ? currentState.undoStack : [],
+      redoStack: Array.isArray(currentState.redoStack) ? currentState.redoStack : []
+    };
+  }
+
+  function commitEditorContent(nextContent, nextSelections = null, previousContent = null) {
+    const currentContent = String(previousContent ?? activeTab?.content ?? editValue ?? "");
+    const historyState = getEditorHistoryState();
+    const undoStack = currentContent !== nextContent
+      ? [...historyState.undoStack, currentContent].slice(-100)
+      : historyState.undoStack;
+
+    setEditValue(nextContent);
+    if (nextSelections) {
+      setSelections(nextSelections);
+      setPrimarySelectionIndex(nextSelections.length - 1);
+      setEditorSelection(nextSelections.at(-1) || null);
+    }
+
+    syncActiveTabState({
+      content: nextContent,
+      editValue: nextContent,
+      isDirty: true,
+      undoStack,
+      redoStack: []
+    });
+
+    if (nextSelections && nextSelections.at(-1)) {
+      window.requestAnimationFrame(() => {
+        const last = nextSelections.at(-1);
+        if (last && editorAreaRef.current) {
+          editorAreaRef.current.setSelectionRange(last.start, last.end);
+        }
+      });
+    }
+  }
+
+  function handleEditorHistory(step) {
+    const historyState = getEditorHistoryState();
+    const currentContent = String(activeTab?.content ?? editValue ?? "");
+    const baseContent = String(baseEditValue ?? "");
+
+    if (step < 0) {
+      if (historyState.undoStack.length === 0) {
         return;
       }
 
-      window.setTimeout(() => editorSearchInputRef.current?.select(), 0);
+      const nextContent = historyState.undoStack[historyState.undoStack.length - 1];
+      const nextUndoStack = historyState.undoStack.slice(0, -1);
+      const nextRedoStack = [...historyState.redoStack, currentContent].slice(-100);
+
+      setEditValue(nextContent);
+      setSelections([]);
+      setPrimarySelectionIndex(-1);
+      setEditorSelection(null);
+      syncActiveTabState({
+        content: nextContent,
+        editValue: nextContent,
+        isDirty: nextContent !== baseContent,
+        undoStack: nextUndoStack,
+        redoStack: nextRedoStack
+      });
       return;
     }
 
-    if (event.metaKey && !event.altKey && !event.ctrlKey && event.key.toLowerCase() === "d") {
+    if (historyState.redoStack.length === 0) {
+      return;
+    }
+
+    const nextContent = historyState.redoStack[historyState.redoStack.length - 1];
+    const nextRedoStack = historyState.redoStack.slice(0, -1);
+    const nextUndoStack = [...historyState.undoStack, currentContent].slice(-100);
+
+    setEditValue(nextContent);
+    setSelections([]);
+    setPrimarySelectionIndex(-1);
+    setEditorSelection(null);
+    syncActiveTabState({
+      content: nextContent,
+      editValue: nextContent,
+      isDirty: nextContent !== baseContent,
+      undoStack: nextUndoStack,
+      redoStack: nextRedoStack
+    });
+  }
+
+  function replaceSelections(insertedText) {
+    const currentContent = String(activeTab?.content ?? editValue ?? "");
+    const sortedSelections = [...selections].sort((a, b) => b.start - a.start);
+
+    let nextContent = currentContent;
+
+    for (const range of sortedSelections) {
+      nextContent = `${nextContent.slice(0, range.start)}${insertedText}${nextContent.slice(range.end)}`;
+    }
+
+    const nextSelections = selections.map((range) => ({
+      start: range.start,
+      end: range.start + insertedText.length
+    }));
+
+    commitEditorContent(nextContent, nextSelections, currentContent);
+  }
+
+  function applyEditFromValue(newValue) {
+    const nextValue = String(newValue ?? "");
+    const oldValue = String(activeTab?.content ?? editValue ?? "");
+
+    if (selections.length <= 1) {
+      setEditValue(nextValue);
+      syncActiveTabState({
+        content: nextValue,
+        isDirty: true
+      });
+      return nextValue;
+    }
+
+    let value = oldValue;
+
+    for (let index = selections.length - 1; index >= 0; index -= 1) {
+      const sel = selections[index];
+      value = `${value.slice(0, sel.start)}${nextValue.slice(sel.start, sel.end)}${value.slice(sel.end)}`;
+    }
+
+    setEditValue(value);
+    syncActiveTabState({
+      content: value,
+      isDirty: true
+    });
+    return value;
+  }
+
+  function handleEditorChange(event) {
+    const textarea = event.currentTarget;
+    const domValue = String(textarea.value ?? "");
+    const currentContent = String(activeTab?.content ?? editValue ?? "");
+
+    if (selections.length <= 1) {
+      commitEditorContent(domValue, null, currentContent);
+      return;
+    }
+
+    const diff = getTextDiff(currentContent, domValue);
+
+    const nextText = applyDiffToSelections(currentContent, selections, diff);
+    const nextSelections = selections.map((sel) => ({
+      start: sel.start,
+      end: sel.start + diff.insertedText.length
+    }));
+
+    commitEditorContent(nextText, nextSelections, currentContent);
+  }
+
+  function handleEditorKeyDownCapture(event) {
+    const key = event.key.toLowerCase();
+
+    if ((event.metaKey || event.ctrlKey) && key === "z") {
       event.preventDefault();
-      handleCommandD();
+      event.stopPropagation();
+      handleEditorHistory(event.shiftKey ? 1 : -1);
+      return;
+    }
+
+    if ((event.metaKey || event.ctrlKey) && key === "y") {
+      event.preventDefault();
+      event.stopPropagation();
+      handleEditorHistory(1);
+      return;
+    }
+
+    if ((event.metaKey || event.ctrlKey) && key === "d") {
+      event.preventDefault();
+      event.stopPropagation();
+      handleAddNextSelection(event.currentTarget, event.shiftKey);
+      return;
+    }
+
+    if ((event.metaKey || event.ctrlKey) && key === "f") {
+      return;
+    }
+  }
+
+  function handleEditorKeyDown(event) {
+    if (selections.length > 1) {
+      if (event.key === "Backspace" || event.key === "Delete") {
+        event.preventDefault();
+        replaceSelections("");
+        return;
+      }
+
+      if (event.key === "Enter") {
+        event.preventDefault();
+        replaceSelections("\n");
+        return;
+      }
+
+      if (event.key === "Tab") {
+        event.preventDefault();
+        replaceSelections("  ");
+        return;
+      }
+    }
+
+    if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "d") {
+      return;
+    }
+
+    if (event.metaKey || event.ctrlKey) {
       return;
     }
 
     if (event.key === "Escape") {
-      if (searchOpen || searchQuery || selections.length > 0) {
+      if (selections.length > 0) {
+        event.preventDefault();
+        setSelections([]);
+        setPrimarySelectionIndex(null);
+        return;
+      }
+
+      if (searchOpen || searchQuery) {
         event.preventDefault();
         clearSearchState();
       }
@@ -1579,76 +1971,23 @@ function Pane({
         return;
       }
     }
-
-    if (selections.length > 0 && !event.metaKey && !event.ctrlKey && !event.altKey) {
-      if (event.key === "ArrowLeft" || event.key === "ArrowRight" || event.key === "ArrowUp" || event.key === "ArrowDown" || event.key === "Home" || event.key === "End") {
-        setSelections([]);
-        return;
-      }
-    }
   }
 
-  function handleEditorBeforeInput(event) {
-    if (selections.length === 0) {
-      return;
-    }
-
-    const inputType = event.nativeEvent?.inputType || "";
-    if (!inputType.startsWith("insert") && !inputType.startsWith("delete")) {
-      return;
-    }
-
-    if (inputType === "insertFromPaste") {
-      return;
-    }
-
-    event.preventDefault();
-
-    const insertText = inputType === "insertLineBreak"
-      ? "\n"
-      : typeof event.data === "string"
-        ? event.data
-        : "";
-
-    const editKind = inputType === "deleteContentBackward"
-      ? "backspace"
-      : inputType === "deleteContentForward"
-        ? "delete"
-        : "insert";
-
-    const nextState = applyMultiSelectionEdit(editValue, selections, editKind, insertText);
-    setEditValue(nextState.value);
-    setSelections(nextState.selections);
-    syncActiveTabState({
-      editValue: nextState.value,
-      isDirty: nextState.value !== baseEditValue,
-      editorSelection: nextState.selections[0] || editorSelection
-    });
-    if (nextState.selections[0]) {
-      setEditorSelection(nextState.selections[0]);
-      focusEditorSelection(nextState.selections[0]);
+  function handleEditorMouseDown(event) {
+    if (!event.metaKey && !event.ctrlKey && !event.shiftKey) {
+      setSelections([]);
+      setPrimarySelectionIndex(null);
     }
   }
 
   function handleEditorPaste(event) {
-    if (selections.length === 0) {
+    if (selections.length <= 1) {
       return;
     }
 
     event.preventDefault();
-    const pasteText = event.clipboardData?.getData("text") || "";
-    const nextState = applyMultiSelectionEdit(editValue, selections, "insert", pasteText);
-    setEditValue(nextState.value);
-    setSelections(nextState.selections);
-    syncActiveTabState({
-      editValue: nextState.value,
-      isDirty: nextState.value !== baseEditValue,
-      editorSelection: nextState.selections[0] || editorSelection
-    });
-    if (nextState.selections[0]) {
-      setEditorSelection(nextState.selections[0]);
-      focusEditorSelection(nextState.selections[0]);
-    }
+    const text = event.clipboardData?.getData("text") || "";
+    replaceSelections(text);
   }
 
   function openOrActivateTab(filePath, fileName) {
@@ -1661,7 +2000,7 @@ function Pane({
       if (current.some((tab) => tab.path === filePath)) {
         return current;
       }
-      return [...current, { path: filePath, name: fileName || filePath, isDirty: false }];
+      return [...current, { path: filePath, name: fileName || filePath, content: "", isDirty: false }];
     });
     setActiveTabPath(filePath);
   }
@@ -1855,6 +2194,8 @@ function Pane({
         setImageNavFiles([]);
         syncActiveTabState({
           fileData: next,
+          isDirty: false,
+          content: nextEditValue,
           editValue: nextEditValue,
           baseEditValue: nextEditValue,
           loading: false,
@@ -2119,6 +2460,8 @@ function Pane({
           setError("");
           syncActiveTabState({
             fileData: next,
+            isDirty: false,
+            content: nextEditValue,
             editValue: nextEditValue,
             baseEditValue: nextEditValue,
             error: ""
@@ -2589,20 +2932,12 @@ function Pane({
             ref={editorAreaRef}
             className="editor-area editor-area-mirror"
             value={editValue}
-            onChange={(event) => {
-              if (selections.length > 0) {
-                return;
-              }
-              setEditValue(event.target.value);
-              syncActiveTabState({
-                editValue: event.target.value,
-                isDirty: event.target.value !== baseEditValue
-              });
-            }}
+            onChange={handleEditorChange}
             onScroll={handleEditorScroll}
             onSelect={handleEditorSelect}
+            onMouseDown={handleEditorMouseDown}
+            onKeyDownCapture={handleEditorKeyDownCapture}
             onKeyDown={handleEditorKeyDown}
-            onBeforeInput={handleEditorBeforeInput}
             onPaste={handleEditorPaste}
             spellCheck={false}
           />
@@ -2877,11 +3212,6 @@ function Pane({
               className={`preview-tab${openTabs.length === 1 ? " single-tab" : ""}${isActive ? " active" : ""}${isActivePane && isActive && showEditButton ? " has-actions" : ""}${isDragging ? " dragging" : ""}${isDropBefore ? " drop-before" : ""}${isDropAfter ? " drop-after" : ""}`}
               title={tab.path}
               onClick={() => {
-                console.log("TAB CLICK", {
-                  paneId: pane.id,
-                  path: tab.path,
-                  tabs: pane.tabs
-                });
                 onPaneFocus?.(pane.id);
                 setActiveTabPath(tab.path);
               }}
@@ -2910,7 +3240,11 @@ function Pane({
             >
               <span className="preview-tab-title">
                 <span className="preview-tab-name">{tab.name}</span>
-                {tab.isDirty ? <span className="preview-tab-dirty" aria-hidden="true">●</span> : null}
+                {tab.path === activeTabPath ? (
+                  activeTab?.isDirty ? <span className="preview-tab-dirty" aria-hidden="true">●</span> : null
+                ) : tab.isDirty ? (
+                  <span className="preview-tab-dirty" aria-hidden="true">●</span>
+                ) : null}
               </span>
               {isActivePane && isActive && showEditButton ? (
                 <span className="preview-active-tab-actions icon-area">
@@ -2967,6 +3301,7 @@ function Pane({
                         await saveFile(fileData.path, editValue);
                         setBaseEditValue(editValue);
                         syncActiveTabState({
+                          content: editValue,
                           baseEditValue: editValue,
                           isDirty: false
                         });
@@ -3265,9 +3600,11 @@ const PaneContainer = forwardRef(function PaneContainer({
   selectedFile,
   onSelectFile,
   onSaved,
+  onPaneStateChange,
   markdownHeadingColors,
   markdownHeadingSizes
 }, ref) {
+  const emptyPaneState = () => [{ id: "pane-1", tabs: [], activeTabPath: "" }];
   const [panes, setPanes] = useState(() => [{ id: "pane-1", tabs: [], activeTabPath: "" }]);
   const [activePaneId, setActivePaneId] = useState("pane-1");
   const [splitRatio, setSplitRatio] = useState(0.5);
@@ -3282,6 +3619,10 @@ const PaneContainer = forwardRef(function PaneContainer({
   const resizeRatioRef = useRef(0.5);
   const dragRafRef = useRef(0);
   const edgeDropPositionRef = useRef(null);
+
+  useEffect(() => {
+    onPaneStateChange?.(panes);
+  }, [onPaneStateChange, panes]);
 
   function updatePane(paneId, updater) {
     setPanes((current) =>
@@ -3304,12 +3645,6 @@ const PaneContainer = forwardRef(function PaneContainer({
       return;
     }
 
-    console.log("TAB CLICK", {
-      paneId: targetPane.id,
-      path: file.path,
-      tabs: targetPane.tabs
-    });
-
     setPanes((current) =>
       current.map((pane) => {
         if (pane.id !== targetPane.id) {
@@ -3325,7 +3660,7 @@ const PaneContainer = forwardRef(function PaneContainer({
 
         return {
           ...pane,
-          tabs: [...pane.tabs, { path: file.path, name: file.name, isDirty: false }],
+          tabs: [...pane.tabs, { path: file.path, name: file.name, content: "", isDirty: false }],
           activeTabPath: file.path
         };
       })
@@ -3335,7 +3670,11 @@ const PaneContainer = forwardRef(function PaneContainer({
   useImperativeHandle(
     ref,
     () => ({
-      openFile
+      openFile,
+      resetWorkspace: () => {
+        setPanes(emptyPaneState());
+        setActivePaneId("pane-1");
+      }
     }),
     [panes, activePaneId]
   );

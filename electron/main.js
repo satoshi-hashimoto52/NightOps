@@ -868,7 +868,7 @@ async function saveSettings(settings) {
 
 async function getSystemStatus(directoryPath = "") {
   const targetPath = directoryPath || os.homedir();
-  const userName = os.userInfo().username || "hashimoto";
+  const userName = process.env.USER || os.userInfo().username || "unknown";
 
   try {
     const stats = await fs.statfs(targetPath);
@@ -888,6 +888,63 @@ async function getSystemStatus(directoryPath = "") {
       diskTotalGb: 0
     };
   }
+}
+
+async function getGitBranch(directoryPath = "") {
+  const targetPath = directoryPath || "/";
+
+  try {
+    const { stdout } = await execFileAsync("git", ["-C", targetPath, "branch", "--show-current"]);
+    const branch = stdout.trim();
+    return branch || "-";
+  } catch {
+    return "-";
+  }
+}
+
+function toRemoteBranchUrl(remoteUrl, branch) {
+  const normalizedBranch = String(branch || "").trim();
+  const normalizedRemoteUrl = String(remoteUrl || "").trim();
+  if (!normalizedBranch || normalizedBranch === "-" || !normalizedRemoteUrl) {
+    return "";
+  }
+
+  const withoutGit = normalizedRemoteUrl.replace(/\.git$/, "");
+
+  if (withoutGit.startsWith("https://") || withoutGit.startsWith("http://")) {
+    return `${withoutGit}/tree/${encodeURIComponent(normalizedBranch)}`;
+  }
+
+  const sshMatch = withoutGit.match(/^git@([^:]+):(.+)$/);
+  if (sshMatch) {
+    return `https://${sshMatch[1]}/${sshMatch[2]}/tree/${encodeURIComponent(normalizedBranch)}`;
+  }
+
+  const sshUrlMatch = withoutGit.match(/^ssh:\/\/git@([^/]+)\/(.+)$/);
+  if (sshUrlMatch) {
+    return `https://${sshUrlMatch[1]}/${sshUrlMatch[2]}/tree/${encodeURIComponent(normalizedBranch)}`;
+  }
+
+  return "";
+}
+
+async function getTopStatus(directoryPath = "") {
+  const targetPath = directoryPath || "/";
+  const [systemStatus, gitBranch, remoteUrl] = await Promise.all([
+    getSystemStatus(targetPath),
+    getGitBranch(targetPath),
+    execFileAsync("git", ["-C", targetPath, "remote", "get-url", "origin"])
+      .then(({ stdout }) => stdout.trim())
+      .catch(() => "")
+  ]);
+
+  return {
+    userName: process.env.USER || systemStatus.userName || "unknown",
+    diskFreeGb: systemStatus.diskFreeGb,
+    diskTotalGb: systemStatus.diskTotalGb,
+    gitBranch,
+    remoteBranchUrl: toRemoteBranchUrl(remoteUrl, gitBranch)
+  };
 }
 
 async function browseDirectory() {
@@ -964,6 +1021,21 @@ ipcMain.handle("codex:stats", async () => {
 ipcMain.handle("settings:get", async () => readSettings());
 ipcMain.handle("settings:save", async (_event, settings) => saveSettings(settings));
 ipcMain.handle("system:status", async (_event, directoryPath) => getSystemStatus(directoryPath));
+ipcMain.handle("system:get-top-status", async (_event, directoryPath) => getTopStatus(directoryPath));
+ipcMain.handle("system:open-external-url", async (_event, url) => shell.openExternal(url));
+ipcMain.handle("dialog:confirm-discard-unsaved", async (_event, count) => {
+  const result = await dialog.showMessageBox({
+    type: "warning",
+    buttons: ["キャンセル", "続行"],
+    defaultId: 0,
+    cancelId: 0,
+    title: "未保存の変更",
+    message: `未保存のファイルが ${count} 件あります。`,
+    detail: "ディレクトリを切り替えると、未保存の変更は破棄されます。続行しますか？"
+  });
+
+  return result.response === 1;
+});
 ipcMain.handle("fs:browse-directory", async () => browseDirectory());
 ipcMain.handle("window:focus", async () => focusWindow());
 ipcMain.handle("fs:root", async () => {

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import TopBar from "./components/TopBar";
 import FileTree from "./components/FileTree";
 import PaneContainer from "./components/PreviewPane";
@@ -22,6 +22,7 @@ import {
   revealFile,
   saveSettings
 } from "./utils/fileLoader";
+import { confirmDiscardUnsaved, getTopStatus, openExternalUrl } from "./utils/system";
 
 const SELECTED_FILE_KEY = "nightops:selected-file";
 const TREE_SORT_KEY = "treeSortMode";
@@ -103,6 +104,7 @@ export default function App() {
   const [treeReloadToken, setTreeReloadToken] = useState(0);
   const [browseMenu, setBrowseMenu] = useState(null);
   const [sortMode, setSortMode] = useState(() => loadTreeSortMode());
+  const [unsavedCount, setUnsavedCount] = useState(0);
   const leftPanelRef = useRef(null);
   const paneContainerRef = useRef(null);
   const [settings, setSettings] = useState({
@@ -127,10 +129,12 @@ export default function App() {
     markdownHeadingColors: ["#8fd3ff", "#7bdc6a", "#f5c542", "#c18cff", "#e88787", "#9dd6c4"],
     markdownHeadingSizes: [1.65, 1.4, 1.22, 1.08, 0.98, 0.98]
   });
-  const [systemStatus, setSystemStatus] = useState({
-    userName: "hashimoto",
+  const [topStatus, setTopStatus] = useState({
+    userName: "unknown",
     diskFreeGb: 0,
-    diskTotalGb: 0
+    diskTotalGb: 0,
+    gitBranch: "-",
+    remoteBranchUrl: ""
   });
 
   function handleSelectFile(file) {
@@ -139,6 +143,15 @@ export default function App() {
       paneContainerRef.current?.openFile?.(file);
     }
   }
+
+  const handlePaneStateChange = useCallback((nextPanes) => {
+    setUnsavedCount(
+      (nextPanes || []).reduce(
+        (count, pane) => count + (pane?.tabs || []).filter((tab) => tab?.isDirty).length,
+        0
+      )
+    );
+  }, []);
 
   const appStyle = {
     "--app-shell-alpha": String(settings.backgroundOpacity),
@@ -218,37 +231,49 @@ export default function App() {
   }, [rootPath]);
 
   useEffect(() => {
-    const api = window.api || window.nightOps;
-    if (!rootPath || !api) {
+    if (!rootPath) {
+      setTopStatus({
+        userName: "unknown",
+        diskFreeGb: 0,
+        diskTotalGb: 0,
+        gitBranch: "-",
+        remoteBranchUrl: ""
+      });
       return;
     }
 
     let cancelled = false;
 
-    async function refreshSystemStatus() {
+    async function refreshTopStatus() {
       try {
-        const status = await api.getSystemStatus(rootPath);
+        const status = await getTopStatus(rootPath);
         if (!cancelled) {
-          setSystemStatus({
-            userName: status?.userName || "hashimoto",
+          setTopStatus({
+            userName: status?.userName || "unknown",
             diskFreeGb: Number(status?.diskFreeGb) || 0,
-            diskTotalGb: Number(status?.diskTotalGb) || 0
+            diskTotalGb: Number(status?.diskTotalGb) || 0,
+            gitBranch: status?.gitBranch || "-",
+            remoteBranchUrl: status?.remoteBranchUrl || ""
           });
         }
       } catch {
         if (!cancelled) {
-          setSystemStatus({
-            userName: "hashimoto",
+          setTopStatus({
+            userName: "unknown",
             diskFreeGb: 0,
-            diskTotalGb: 0
+            diskTotalGb: 0,
+            gitBranch: "-",
+            remoteBranchUrl: ""
           });
         }
       }
     }
 
-    refreshSystemStatus();
+    refreshTopStatus();
+    const timer = window.setInterval(refreshTopStatus, 60000);
     return () => {
       cancelled = true;
+      window.clearInterval(timer);
     };
   }, [rootPath]);
 
@@ -430,6 +455,14 @@ export default function App() {
     try {
       const browseResult = await browseDirectory();
       if (!browseResult.canceled && browseResult.path) {
+        if (unsavedCount > 0) {
+          const ok = await confirmDiscardUnsaved(unsavedCount);
+          if (!ok) {
+            return;
+          }
+        }
+
+        paneContainerRef.current?.resetWorkspace?.();
         await handleDirectoryChange(browseResult.path);
       }
     } catch (error) {
@@ -633,6 +666,27 @@ export default function App() {
   return (
     <div className="app-shell" style={appStyle}>
       <div className="window-drag-bar">
+        <span className="top-status-strip">
+          <span className="top-status-user">{topStatus.userName}</span>
+          <span
+            className="top-status-disk"
+            style={{ color: getDiskColor(topStatus.diskFreeGb, topStatus.diskTotalGb) }}
+          >
+            {`${Math.round(topStatus.diskFreeGb)}GB / ${Math.round(topStatus.diskTotalGb)}GB`}
+          </span>
+          {topStatus.remoteBranchUrl ? (
+            <button
+              type="button"
+              className="top-status-git clickable"
+              onClick={() => openExternalUrl(topStatus.remoteBranchUrl)}
+            >
+              Git: {topStatus.gitBranch || "-"}
+            </button>
+          ) : (
+            <span className="top-status-git">Git: {topStatus.gitBranch || "-"}</span>
+          )}
+          <span className="top-status-unsaved">Unsaved: {unsavedCount}</span>
+        </span>
         <div className="window-path-area">
           <div className="window-path">{`NightOps — ${rootPath || "No directory selected"}`}</div>
           <button
@@ -746,6 +800,7 @@ export default function App() {
             selectedFile={selectedFile}
             onSelectFile={handleSelectFile}
             onSaved={() => setNotice("Saved")}
+            onPaneStateChange={handlePaneStateChange}
             markdownHeadingColors={previewMarkdownHeadingColors.length > 0 ? previewMarkdownHeadingColors : settings.markdownHeadingColors}
             markdownHeadingSizes={previewMarkdownHeadingSizes.length > 0 ? previewMarkdownHeadingSizes : settings.markdownHeadingSizes}
           />

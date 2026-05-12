@@ -1,155 +1,232 @@
-TREEヘッダー行にソート切替ボタンを追加してください。
-既存レイアウトは変更せず、最小差分で実装すること。
+Browseで参照ディレクトリを切り替える時、現在開いている Preview / Editor の全タブを閉じるようにしてください。
+ただし、未保存タブがある場合は事前に確認ダイアログを表示し、ユーザーが許可した場合のみ切り替えること。
 
 ---
 
-【配置】
+【目的】
 
-Treeラベルと Fold(Cmd+B) がある行の「右端」に配置
+- 参照ディレクトリ変更時に、古いワークスペースのタブが残らないようにする
+- 別ディレクトリのファイル状態が混ざる不具合を防ぐ
+- 未保存内容を誤って失わないようにする
+
+---
+
+【対象】
+
+Browseボタンで参照ディレクトリを変更する処理
+
+対象ファイル例：
+
+- src/App.jsx
+- src/components/PreviewPane.jsx
+- electron/main.js
+- electron/preload.js
+
+※ 実際のBrowse処理がある場所を確認して、そこだけ修正してください。
+
+---
+
+【仕様】
+
+Browseで新しいディレクトリを選択した時：
+
+1. 現在開いている全ペイン / 全タブを確認
+2. isDirty === true のタブがあるか判定
+3. 未保存タブがある場合は確認ダイアログを表示
+4. ユーザーがキャンセルした場合はディレクトリ変更しない
+5. ユーザーが続行した場合のみ以下を実行
+   - 全タブを閉じる
+   - activeTab をクリア
+   - pane状態を初期化
+   - selectedFile / activePath など表示対象をクリア
+   - rootPath を新しいディレクトリへ変更
+
+---
+
+【未保存判定】
+
+全pane / 全tabを対象にすること。
 
 例：
 
-[Tree]  [Fold(Cmd+B)]                          [Name ▼]
+const hasUnsavedTabs = panes.some(pane =>
+  pane.tabs.some(tab => tab.isDirty)
+);
+
+未保存数も取得できるなら取得する。
+
+例：
+
+const unsavedCount = panes.reduce((count, pane) => {
+  return count + pane.tabs.filter(tab => tab.isDirty).length;
+}, 0);
 
 ---
 
-【ボタン仕様】
+【確認ダイアログ】
 
-単一ボタンでトグル切替
+未保存タブがある場合：
 
-押下ごとに：
+表示文言例：
 
-Name → Ext → Update → Name
+未保存のファイルが 2 件あります。
+ディレクトリを切り替えると、未保存の変更は破棄されます。
+続行しますか？
 
-表示も連動：
+ボタン：
 
-Name ▼
-Ext ▼
-Update ▼
+- Cancel
+- Continue
 
----
+Cancel：
 
-【状態管理】
+- 何もしない
+- Browse処理を中断
 
-追加：
+Continue：
 
-const [sortMode, setSortMode] = useState("name")
-
----
-
-【永続化】
-
-localStorage使用：
-
-キー：treeSortMode
-
-起動時に復元
+- 未保存内容を破棄してディレクトリ変更
 
 ---
 
-【クリック処理】
+【Electron側の確認ダイアログ】
 
-setSortModeを以下順で切替：
+可能なら Electron の dialog.showMessageBox を使ってください。
 
-name → ext → update → name
+electron/main.js：
 
----
+ipcMain.handle("dialog:confirm-discard-unsaved", async (_, count) => {
+  const result = await dialog.showMessageBox({
+    type: "warning",
+    buttons: ["Cancel", "Continue"],
+    defaultId: 0,
+    cancelId: 0,
+    title: "Unsaved changes",
+    message: `未保存のファイルが ${count} 件あります。`,
+    detail: "ディレクトリを切り替えると、未保存の変更は破棄されます。続行しますか？"
+  });
 
-【ソート処理】
-
-TREE描画前に適用：
-
-sortFiles(files, sortMode)
-
----
-
-【ソートルール】
-
-① 共通
-・ディレクトリは常に上
-
----
-
-② name
-・ファイル名昇順
+  return result.response === 1;
+});
 
 ---
 
-③ ext
-・拡張子 → ファイル名
+【preload】
+
+window.api に追加してください。
+
+confirmDiscardUnsaved: (count) =>
+  ipcRenderer.invoke("dialog:confirm-discard-unsaved", count)
 
 ---
 
-④ update
-・更新日時降順（新しい順）
+【Browse処理側】
 
----
+疑似コード：
 
-【ソート関数】
+async function handleBrowseDirectory() {
+  const nextDirectory = await browseDirectory();
+  if (!nextDirectory) return;
 
-function sortFiles(files, mode) {
-  return [...files].sort((a, b) => {
-    if (a.isDir !== b.isDir) {
-      return a.isDir ? -1 : 1;
+  const unsavedCount = getUnsavedTabCount();
+
+  if (unsavedCount > 0) {
+    const ok = await window.api.confirmDiscardUnsaved(unsavedCount);
+    if (!ok) {
+      return;
     }
+  }
 
-    if (mode === "ext") {
-      const extA = a.name.includes('.') ? a.name.split('.').pop() : ''
-      const extB = b.name.includes('.') ? b.name.split('.').pop() : ''
-      if (extA !== extB) return extA.localeCompare(extB)
-      return a.name.localeCompare(b.name)
-    }
-
-    if (mode === "update") {
-      return (b.mtime || 0) - (a.mtime || 0)
-    }
-
-    return a.name.localeCompare(b.name)
-  })
+  resetEditorWorkspace();
+  setRootPath(nextDirectory);
 }
 
 ---
 
-【UIスタイル】
+【タブ・ペイン初期化】
 
-クラス：.tree-sort-btn
+追加または既存関数を利用してください。
 
-.tree-sort-btn {
-  font-size: 12px;
-  color: #aaa;
-  cursor: pointer;
+例：
+
+function resetEditorWorkspace() {
+  setPanes([
+    {
+      id: "pane-1",
+      tabs: [],
+      activeTabPath: null
+    }
+  ]);
+
+  setActivePaneId("pane-1");
+  setSelectedFile(null);
+  setFileData(null);
+  setEditValue("");
+  setBaseEditValue("");
+  setSelections([]);
+  setSearchQuery("");
+  setShowSearchBar(false);
 }
 
-.tree-sort-btn:hover {
-  color: #fff;
-}
+※ 実際のstate名に合わせて修正してください。
 
 ---
 
-【動作】
+【重要】
 
-・クリックで即時反映
-・TREE再読み込み不要
-・展開状態は維持
+rootPath を変更する前に resetEditorWorkspace() を実行すること。
+
+理由：
+
+- 古いrootPath配下のタブが残るのを防ぐ
+- TREE / Preview / Editor の参照ズレを防ぐ
+
+---
+
+【localStorage対応】
+
+タブやペイン状態を localStorage に保存している場合：
+
+Browse切り替え時に古いタブ状態を削除してください。
+
+例：
+
+localStorage.removeItem("nightops:open-tabs");
+localStorage.removeItem("nightops:panes");
+
+※ 実際のキー名がある場合のみ対象。
 
 ---
 
 【禁止】
 
-・ドロップダウン化
-・複数ボタン化
-・レイアウト変更
+- 未保存タブがある状態で無確認に閉じる
+- rootPathだけ変更してタブを残す
+- activeTabPathだけ残す
+- selectedFileだけ残す
+- 確認前にタブを閉じる
+- Browseキャンセル時に状態を変更する
+- 既存の保存処理を変更する
 
 ---
 
-【ゴール】
+【確認】
 
-・1ボタンでソート切替
-・表示が即変わる
-・状態が保持される
+以下を実際に確認してください。
+
+1. ファイルを複数開く
+2. 未保存なしでBrowseする
+3. ディレクトリ変更後、全タブが閉じている
+4. ファイルを編集して未保存状態にする
+5. Browseする
+6. 確認ダイアログが出る
+7. Cancelで何も変わらない
+8. Continueで全タブが閉じ、ディレクトリが切り替わる
+9. selectedFile / Preview / Editor が空になる
+10. npm run build が成功する
 
 ---
 
 【出力】
 
-変更箇所のみ提示
+変更箇所のみ提示してください。

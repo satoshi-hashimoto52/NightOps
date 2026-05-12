@@ -18,3 +18,18 @@ export async function getSystemUsage() {
   const api = await getApi();
   return api.getSystemUsage();
 }
+
+export async function getTopStatus(rootPath) {
+  const api = await getApi();
+  return api.getTopStatus(rootPath);
+}
+
+export async function openExternalUrl(url) {
+  const api = await getApi();
+  return api.openExternalUrl(url);
+}
+
+export async function confirmDiscardUnsaved(count) {
+  const api = await getApi();
+  return api.confirmDiscardUnsaved(count);
+}
