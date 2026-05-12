@@ -1,208 +1,76 @@
-<!-- CREATED: true -->
-
 # SPEC
 
-## 対象
+## Scope
 
-- デスクトップ補助ツール `NightOps`
-- 主用途はローカル開発作業の補助
-- 主役はターミナル操作で、NightOps は周辺操作を担当
+- NightOps is a desktop helper app for local development work.
+- The terminal is the primary workspace.
 
-## ユースケース
+## Core flows
 
-- 作業対象ディレクトリを開く
-- ファイルツリーから対象を選ぶ
-- ファイル内容を確認する
-- 対応形式のファイルを軽く編集して保存する
-- ファイルやフォルダを整理する
-- Codex 利用状況と端末リソースを確認する
-- 選択ディレクトリで Codex CLI を起動する
-- 表示や利用量計算の設定を変更する
+### Startup
 
-## 操作フロー
+- On startup, the app loads the saved initial directory.
+- If no initial directory is configured, the home directory is used.
+- If the previously selected file still exists under the current root, it is restored.
 
-### 初期表示
+### Root directory
 
-- 起動時に保存済みの初期ディレクトリを開く
-- 初期ディレクトリ未設定時はホームディレクトリを開く
-- 前回選択ファイルが現在のルート配下にある場合は再選択する
+- The root directory can be changed from the Browse button.
+- When the root changes, the current selection is cleared.
+- If there are unsaved tabs, the app shows a Japanese confirmation dialog before discarding them.
 
-### ディレクトリ変更
+### Tree
 
-- 設定済みディレクトリは左ペインのルートとして表示する
-- ユーザーはディレクトリ選択ダイアログからルートを変更できる
-- ルート変更時は設定を保存し、現在選択ファイルは解除する
+- The tree supports lazy loading of folders.
+- Hidden entries include `.git`, `node_modules`, and `.cache`.
+- Tree sorting is available for `name`, `ext`, and `update`.
+- The tree supports multi-select, range select, rename, delete, copy, cut, paste, create file, create folder, drag move, and external drop.
 
-### ファイル確認
+### Preview / editor
 
-- 左ペインのファイル選択で右ペインにタブを開く
-- 右ペインは複数タブを保持する
-- 右ペインは最大2ペインまで分割できる
-- アクティブペインに対して選択ファイルを開く
+- Tabs are kept per pane.
+- Up to two panes can be shown.
+- Markdown files render with an outline column and a resizable divider.
+- The outline can be hidden.
+- Text files can be edited and saved.
+- `Cmd/Ctrl+F` opens editor search.
+- `Cmd/Ctrl+D` adds the next matching selection.
+- `Cmd/Ctrl+Z` undoes, and `Cmd/Ctrl+Shift+Z` or `Ctrl+Y` redoes.
+- `Cmd/Ctrl+Tab` switches tabs and `Cmd/Ctrl+W` closes the active tab.
 
-### ファイル編集
+### Launch
 
-- テキスト系ファイルは編集モードで内容を変更できる
-- 保存時は元ファイルへ上書き保存する
-- CSV は表示専用とする
-- PDF と画像は表示専用とする
+- Launch Codex accepts a directory path and a model.
+- It opens Terminal.app and runs `codex -m ...`.
 
-### ファイル整理
+### Settings
 
-- ツリー上でファイル/フォルダ作成、リネーム、削除を行える
-- ツリー上でコピー、カット、ペーストを行える
-- ツリー内ドラッグで移動できる
-- Finder からのドロップでルートまたは対象ディレクトリへ取り込める
+- Settings can be dragged and resized.
+- Background opacity and container opacity are stored as percentages from `0` to `100`.
+- Markdown heading colors and sizes are stored per heading level.
+- Codex models, usage model, divisors, and reset schedule are saved in `settings.json`.
 
-### Codex 起動
+## I/O
 
-- Launch パネルで実行ディレクトリとモデルを指定する
-- 実行時は macOS Terminal.app を開いて Codex CLI を起動する
+### Inputs
 
-## UI仕様
+- Directory selection
+- Tree operations
+- File edits
+- Launch model selection
+- Settings values
 
-### 全体レイアウト
+### Outputs
 
-- 上部バー
-- 左ペイン: ファイルツリー
-- 右ペイン: プレビュー/編集エリア
-- モーダル: Launch / Settings
+- Tree display
+- Preview / editor panes
+- Launch / Settings modals
+- CPU / memory monitoring
+- Codex usage display
+- Status notifications
 
-### 上部バー
+## File limits
 
-- `Monitor`
-- 表示項目: CPU使用率、CPU名、メモリ使用率、使用量/総量
-- 更新間隔: 2秒
-
-- `Codex`
-- 表示項目: request数、token推定値、5H残量、Weekly残量
-- 次回リセット時刻を表示する
-- 利用量は設定されたモデル係数と分母で算出する
-
-### 左ペイン
-
-- ルート配下をディレクトリ優先で表示する
-- 展開状態はルート単位で保持する
-- 選択状態とアクティブ行を保持する
-- `ignored` 判定結果を持つが、一覧からは除外しない
-- 大量エントリのディレクトリは警告行を表示する
-- サイドバー幅はドラッグで変更できる
-- サイドバーは折りたたみできる
-
-### 右ペイン
-
-- タブ表示
-- 最大2ペイン表示
-- タブのドラッグ移動に対応する
-- タブの複製移動は `Ctrl/Cmd` 付きドラッグで行う
-- Markdown は簡易レンダリングで表示する
-- Markdown は見出し単位で折りたたみできる
-- Markdown はプレビューとアウトラインの2カラム表示に対応する
-- プレビュー文字サイズは `Ctrl/Cmd + Wheel` で変更できる
-- PDF はページ表示と見開き切替に対応する
-- 画像は表示と同一ディレクトリ内移動に対応する
-
-### Launch パネル
-
-- 入力項目: Directory Path、Model
-- コマンドプレビューを表示する
-- 実行中はボタンを無効化する
-
-### Settings パネル
-
-- ドラッグ移動できる
-- 右下リサイズできる
-- 設定カテゴリ
-- Appearance
-- Markdown
-- Codex Reset
-- CODEX
-
-## 入出力仕様
-
-### 入力
-
-- ルートディレクトリ
-- ツリー操作
-- ファイル編集内容
-- Finder またはブラウザ経由のドロップファイル
-- Launch モデル
-- Settings 各種設定値
-
-### 出力
-
-- ファイルツリー表示
-- ファイルプレビュー/編集画面
-- CPU/メモリ表示
-- Codex 利用状況表示
-- 通知メッセージ
-- Terminal.app 起動
-
-## 業務ルール
-
-- ルートは1つだけ保持する
-- 同時に監視するファイルは1件のみとする
-- 右ペインの分割数は最大2とする
-- 大量ディレクトリでも一覧取得自体は行う
-- コピー/移動先で同名がある場合は自動で別名採番する
-- ディレクトリを自分自身の配下へ移動してはならない
-- ルート自体のリネームと削除は行わない
-
-## エラー時の挙動
-
-- 初期設定読込失敗時は通知を表示する
-- ディレクトリ参照失敗時はツリーにエラーを表示する
-- プレビュー非対応ファイルはエラー表示にする
-- サイズ上限超過ファイルはエラー表示にする
-- Launch 失敗時は Launch パネル内にエラー表示する
-- 保存失敗時は通知またはペイン内エラー表示にする
-- 外部取り込み失敗時は通知を表示する
-
-## 権限制御
-
-- ユーザー認証は持たない
-- 操作権限はOS上でアクセス可能なローカルファイルに従う
-
-## 保存ルール
-
-### 設定保存
-
-- アプリ設定は `settings.json` に保存する
-- 保存対象
-- 初期ディレクトリ
-- Codex モデル一覧
-- Launch 既定モデル
-- 利用量算出モデル
-- 利用量分母
-- リセット設定
-- リセット基準トークン
-- 外観設定
-- Markdown 見出し色
-
-### ローカル状態保存
-
-- 前回選択ファイルは `localStorage` に保存する
-- ツリー展開状態は `localStorage` に保存する
-- 最近開いたファイルは `localStorage` に保存する
-
-## ショートカット
-
-- `Ctrl/Cmd + B`: ツリー折りたたみ切替
-- `Ctrl + R`: 画面リロード
-- `Ctrl + L`: Launch パネル表示 / Launch 実行
-- `Ctrl + P`: ファイル名検索
-- `Ctrl/Cmd + Tab`: タブ切替
-- `Ctrl/Cmd + W`: タブを閉じる
-
-### ツリー操作
-
-- `↑ / ↓`: フォーカス移動
-- `Shift + ↑ / ↓ / ← / →`: 範囲選択拡張
-- `Ctrl/Cmd + ↑ / ↓`: フォーカスのみ移動
-- `→`: 展開または子移動
-- `←`: 折りたたみまたは親移動
-- `Home / End / PageUp / PageDown`: 一覧移動
-- `Space`: プレビュー
-- `F2`: リネーム
-- `Delete / Backspace`: 削除
-- `Ctrl/Cmd + C / X / V`: コピー / カット / ペースト
+- CSV preview is limited to 1000 rows.
+- Non-PDF files larger than 5MB are not previewed.
+- PDF rendering is preview-only.

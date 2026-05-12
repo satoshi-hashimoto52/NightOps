@@ -1,87 +1,55 @@
 # NightOps
-NightOps は、Codex CLI を横に置いて使うための Electron + React ベースの補助ツールです。
 
-主役はターミナルで、このアプリは
-- ファイル確認
-- 軽い編集
-- 実行補助
-- 状況監視
-をすばやく行うためのサイドツールとして設計されています。
+NightOps is an Electron + React helper app for using Codex CLI beside normal local development work.
 
-現在の主な特徴:
+The terminal remains the primary workspace. NightOps handles file navigation, light editing, launch helpers, and status monitoring around it.
 
-- Tree で `.md` を緑色表示
-- Markdown Preview で見出しごとの折りたたみ
-- Markdown 見出し色を H1 〜 H6 まで個別設定
-- Settings はドラッグ移動・右下リサイズ対応
-- Codex の 5H / 週次リセットを設定可能
-- 週次リセットは月 + 日 + 時刻で指定
-- Settings 内の Markdown 色編集は Preview にリアルタイム反映
+## Current behavior
 
-## コンセプト
+- Top bar shows:
+  - Monitor: CPU name, CPU usage, memory usage, memory used / total
+  - Codex: request count, token estimate, 5H remaining, Weekly remaining
+  - a clickable Git branch label when a remote URL is available
+  - user name and disk free / total
+- Left tree supports:
+  - name / ext / update sorting
+  - multi-select and range select
+  - rename, delete, copy, cut, paste
+  - create file / folder
+  - drag move and external drop
+  - right-click context menu
+- Right side supports:
+  - multiple tabs
+  - up to two panes
+  - tab drag and drop
+  - recent file chips
+  - markdown outline
+  - outline width resize
+  - outline hide / show
+  - text editing and save
+  - editor search with `Cmd/Ctrl+F`
+  - multi-selection editing with `Cmd/Ctrl+D`
+  - undo / redo
+  - PDF, image, and CSV preview
+- Launch panel opens Terminal.app and runs `codex -m ...`.
+- Settings panel controls:
+  - model list
+  - launch default model
+  - usage model
+  - usage divisors
+  - current remaining percentages
+  - reset schedule
+  - background opacity and blur
+  - markdown heading colors and sizes
+- A boot screen is shown during startup.
 
-- CLI を邪魔しない
-- 縦長レイアウトで横置きしやすい
-- 無駄な UI を増やさない
-- 重い処理を避けて即操作できる
+## UI notes
 
-## スクリーン構成
+- The app uses a dark translucent baseline for normal UI.
+- Launch Codex and Settings use the same panel shell styling.
+- The Settings opacity inputs are percentages from `0` to `100`.
 
-```text
-┌──────────────────────────────┐
-│ MONITOR | CODEX | LAUNCH     │
-├─────────────┬────────────────┤
-│ TREE        │ PREVIEW/EDITOR │
-│             │                │
-└─────────────┴────────────────┘
-```
-
-- 上部バー: CPU、メモリ、Codex 利用状況、Launch 導線
-- 左ペイン: ディレクトリツリー
-- 右ペイン: ファイルプレビューと簡易編集
-
-## 主な機能
-
-- VSCode 風のディレクトリツリー
-- 複数選択、範囲選択、インラインリネーム
-- 右クリックコンテキストメニュー
-- TREE 内ドラッグ移動と Finder からの外部取り込み
-- ファイルプレビュー
-- テキストファイルの簡易編集と保存
-- PDF 表示
-- CSV の簡易テーブル表示
-- Codex CLI の Launch
-- Codex 履歴の集計表示
-- CPU / メモリ監視
-- 最近開いたファイル
-- コマンドテンプレート
-- Markdown の簡易レンダリングと見出し折りたたみ
-- Settings のドラッグ移動とサイズ変更
-- Codex 5H / Weekly リセット監視
-- キーボードショートカット
-
-## 技術スタック
-
-- Electron
-- React
-- Vite
-- highlight.js
-- systeminformation
-
-## クイックスタート
-
-1. プロジェクト直下で依存関係を入れます
-2. `npm run dev` でアプリを起動します
-3. 起動後、保存済みの初期ディレクトリが TREE に表示されます
-4. 左でファイルを選び、右でプレビューまたは編集します
-5. Markdown は Preview で見出し単位に折りたためます
-6. 必要なら `Launch` から Codex CLI を起動します
-7. `⚙` から Settings を開き、位置とサイズを調整できます
-
-`npm run dev` は内部で `vite` と `electron .` を同時に起動します。  
-手動で分ける場合は、先に `npm run dev` 相当の Vite サーバーを立ち上げたうえで `npx electron .` を実行します。
-
-## 起動方法（Mac）
+## Setup
 
 ```bash
 cd /Users/hashimoto/vscode/_app/NightOps
@@ -89,59 +57,32 @@ npm install
 npm run dev
 ```
 
-手動起動する場合:
-
-```bash
-npx electron .
-```
-
-本番ビルド確認:
+For a production build:
 
 ```bash
 npm run build
 ```
 
-## 使い方
+## Shortcuts
 
-1. 起動すると保存済みの初期ディレクトリを開きます
-2. 左のツリーからファイルを選びます
-3. 右ペインで内容を確認し、テキストなら編集して保存します
-4. TREE では複数選択、コピー / カット / ペースト、リネーム、削除、フォルダ作成が使えます
-5. Markdown は Preview で見出し単位に折りたためます
-6. 必要に応じて Launch を開き、ディレクトリ・モデル・テンプレートを指定して Codex CLI を起動します
-7. 上部バーで CPU / メモリ / Codex 利用状況を確認します
+- `Cmd+B`: collapse / expand the tree
+- `Ctrl+R`: reload
+- `Ctrl+L`: open Launch or submit it when it is already open
+- `Ctrl+P`: search for a file name
+- `Ctrl/Cmd+Tab`: switch tabs
+- `Ctrl/Cmd+W`: close the active tab
+- `Cmd/Ctrl+F`: search in the editor
+- `Cmd/Ctrl+D`: add the next matching selection
+- `Cmd/Ctrl+Z`: undo
+- `Cmd/Ctrl+Shift+Z` or `Ctrl+Y`: redo
+- In the tree:
+  - `Space`: open preview
+  - `F2`: rename
+  - `Delete` / `Backspace`: delete
+  - `Home` / `End` / `PageUp` / `PageDown`: move focus
 
-## ディレクトリ構成
+## Limits
 
-```text
-NightOps/
-├── electron/
-│   ├── main.js
-│   └── preload.js
-├── src/
-│   ├── components/
-│   │   ├── FileTree.jsx
-│   │   ├── LaunchPanel.jsx
-│   │   ├── PreviewPane.jsx
-│   │   └── TopBar.jsx
-│   ├── utils/
-│   │   ├── codexLog.js
-│   │   ├── fileLoader.js
-│   │   └── system.js
-│   ├── App.jsx
-│   ├── main.jsx
-│   └── styles.css
-├── docs/
-├── settings.json
-├── package.json
-└── vite.config.js
-```
-
-## 今後の拡張予定
-
-- ファイル検索の強化
-- プレビュー対応形式の追加
-- Launch テンプレートの保存機能
-- 大規模ディレクトリ向けのさらなる最適化
-- 設定項目の追加
-
+- CSV preview uses a simple parser and renders up to 1000 rows.
+- Non-PDF files larger than 5MB are not previewed.
+- PDF rendering is page-based and preview-only.

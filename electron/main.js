@@ -59,6 +59,20 @@ const DEFAULT_LIMITS_SETTINGS = {
   limit5hBaselineTokenEstimate: 0,
   weeklyBaselineTokenEstimate: 0
 };
+
+function normalizeOpacityPercent(value, fallback) {
+  const parsed = Number(value);
+  if (Number.isNaN(parsed)) {
+    return fallback;
+  }
+
+  if (parsed >= 0 && parsed <= 1) {
+    return Math.round(parsed * 100);
+  }
+
+  return Math.max(0, Math.min(100, parsed));
+}
+
 let activeFileWatcher = null;
 let activeWatchedPath = "";
 let heicQueue = Promise.resolve();
@@ -630,8 +644,10 @@ async function readSettings() {
     usageModel: "gpt-5.4",
     weeklyDivisor: 750,
     limit5hDivisor: 350,
-    backgroundOpacity: 0.32,
-    containerOpacity: 0.46,
+    limit5hRemainingPercent: 100,
+    weeklyRemainingPercent: 100,
+    backgroundOpacity: 18,
+    containerOpacity: 28,
     backgroundBlur: 28,
     uiBackgroundBlur: 28,
     markdownHeadingColors: DEFAULT_MARKDOWN_HEADING_COLORS,
@@ -664,14 +680,16 @@ async function readSettings() {
     const weeklyDivisor = Number(parsed.weeklyDivisor) > 0 ? Number(parsed.weeklyDivisor) : defaultSettings.weeklyDivisor;
     const limit5hDivisor =
       Number(parsed.limit5hDivisor) > 0 ? Number(parsed.limit5hDivisor) : defaultSettings.limit5hDivisor;
-    const backgroundOpacity =
-      Number(parsed.backgroundOpacity) >= 0 && Number(parsed.backgroundOpacity) <= 1
-        ? Number(parsed.backgroundOpacity)
-        : defaultSettings.backgroundOpacity;
-    const containerOpacity =
-      Number(parsed.containerOpacity) >= 0 && Number(parsed.containerOpacity) <= 1
-        ? Number(parsed.containerOpacity)
-        : defaultSettings.containerOpacity;
+    const limit5hRemainingPercent = normalizeOpacityPercent(
+      parsed.limit5hRemainingPercent,
+      defaultSettings.limit5hRemainingPercent
+    );
+    const weeklyRemainingPercent = normalizeOpacityPercent(
+      parsed.weeklyRemainingPercent,
+      defaultSettings.weeklyRemainingPercent
+    );
+    const backgroundOpacity = normalizeOpacityPercent(parsed.backgroundOpacity, defaultSettings.backgroundOpacity);
+    const containerOpacity = normalizeOpacityPercent(parsed.containerOpacity, defaultSettings.containerOpacity);
     const backgroundBlur =
       Number(parsed.backgroundBlur) >= 0 ? Math.min(100, Number(parsed.backgroundBlur)) : defaultSettings.backgroundBlur;
     const uiBackgroundBlur =
@@ -722,6 +740,8 @@ async function readSettings() {
           usageModel: normalizedUsageModel,
           weeklyDivisor,
           limit5hDivisor,
+          limit5hRemainingPercent,
+          weeklyRemainingPercent,
           backgroundOpacity,
           containerOpacity,
           backgroundBlur,
@@ -741,6 +761,8 @@ async function readSettings() {
         usageModel: normalizedUsageModel,
         weeklyDivisor,
         limit5hDivisor,
+        limit5hRemainingPercent,
+        weeklyRemainingPercent,
         backgroundOpacity,
         containerOpacity,
         backgroundBlur,
@@ -760,6 +782,8 @@ async function readSettings() {
         usageModel: normalizedUsageModel,
         weeklyDivisor,
         limit5hDivisor,
+        limit5hRemainingPercent,
+        weeklyRemainingPercent,
         backgroundOpacity,
         containerOpacity,
         backgroundBlur,
@@ -800,14 +824,16 @@ async function saveSettings(settings) {
         : current.usageModel,
     weeklyDivisor: Number(settings.weeklyDivisor) > 0 ? Number(settings.weeklyDivisor) : current.weeklyDivisor,
     limit5hDivisor: Number(settings.limit5hDivisor) > 0 ? Number(settings.limit5hDivisor) : current.limit5hDivisor,
-    backgroundOpacity:
-      Number(settings.backgroundOpacity) >= 0 && Number(settings.backgroundOpacity) <= 1
-        ? Number(settings.backgroundOpacity)
-        : current.backgroundOpacity,
-    containerOpacity:
-      Number(settings.containerOpacity) >= 0 && Number(settings.containerOpacity) <= 1
-        ? Number(settings.containerOpacity)
-        : current.containerOpacity,
+    limit5hRemainingPercent: normalizeOpacityPercent(
+      settings.limit5hRemainingPercent,
+      current.limit5hRemainingPercent ?? 100
+    ),
+    weeklyRemainingPercent: normalizeOpacityPercent(
+      settings.weeklyRemainingPercent,
+      current.weeklyRemainingPercent ?? 100
+    ),
+    backgroundOpacity: normalizeOpacityPercent(settings.backgroundOpacity, current.backgroundOpacity),
+    containerOpacity: normalizeOpacityPercent(settings.containerOpacity, current.containerOpacity),
     backgroundBlur:
       Number(settings.backgroundBlur) >= 0
         ? Math.min(100, Number(settings.backgroundBlur))

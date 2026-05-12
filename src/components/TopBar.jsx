@@ -174,8 +174,22 @@ export default function TopBar({
                 strokeDasharray="2 3"
                 horizontalPoints={[0, 14, 28, 42, 56]}
               />
-              <Line type="monotone" dataKey="cpu" stroke="#00d4ff" dot={false} strokeWidth={2} />
-              <Line type="monotone" dataKey="mem" stroke="#7cff00" dot={false} strokeWidth={2} />
+              <Line
+                type="monotone"
+                dataKey="cpu"
+                stroke="#00d4ff"
+                dot={false}
+                strokeWidth={2}
+                isAnimationActive={false}
+              />
+              <Line
+                type="monotone"
+                dataKey="mem"
+                stroke="#7cff00"
+                dot={false}
+                strokeWidth={2}
+                isAnimationActive={false}
+              />
             </LineChart>
           </ResponsiveContainer>
         </div>

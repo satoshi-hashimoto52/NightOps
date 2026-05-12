@@ -1045,17 +1045,6 @@ function Pane({
   }, [activeTabPath]);
 
   useEffect(() => {
-    if (!activeTab || activeTab.path !== activeTabPath) {
-      return;
-    }
-
-    const nextContent = typeof activeTab.content === "string" ? activeTab.content : "";
-    if (nextContent !== editValue) {
-      setEditValue(nextContent);
-    }
-  }, [activeTabPath, activeTab?.content]);
-
-  useEffect(() => {
     const timerId = window.setTimeout(() => {
       const query = searchQuery.trim();
       if (!query) {
@@ -1308,17 +1297,37 @@ function Pane({
     };
 
     tabStateRef.current.set(activeTabPath, nextState);
+
+    const resolvedName = activeTabName || nextState.name;
+    const currentTabSummary = {
+      name: resolvedName,
+      content: nextState.content ?? nextState.editValue,
+      isDirty: Boolean(nextState.isDirty)
+    };
+
     setOpenTabs((current) =>
-      current.map((tab) =>
-        tab.path === activeTabPath
-          ? {
-              ...tab,
-              name: activeTabName || tab.name,
-              content: nextState.content ?? nextState.editValue,
-              isDirty: Boolean(nextState.isDirty)
-            }
-          : tab
-      )
+      current.some((tab) => {
+        if (tab.path !== activeTabPath) {
+          return false;
+        }
+
+        return (
+          tab.name === currentTabSummary.name &&
+          (tab.content ?? "") === (currentTabSummary.content ?? "") &&
+          Boolean(tab.isDirty) === currentTabSummary.isDirty
+        );
+      })
+        ? current
+        : current.map((tab) =>
+            tab.path === activeTabPath
+              ? {
+                  ...tab,
+                  name: resolvedName,
+                  content: currentTabSummary.content,
+                  isDirty: currentTabSummary.isDirty
+                }
+              : tab
+          )
     );
   }
 

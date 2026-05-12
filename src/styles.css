@@ -286,9 +286,6 @@ textarea {
   justify-content: center;
   padding: 0 7px;
   border-radius: 6px;
-  background: rgba(34, 39, 47, 0.72);
-  border: 1px solid rgba(52, 58, 66, 0.84);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
 }
 
 .window-settings-button:hover,
@@ -324,8 +321,7 @@ textarea {
 
 .topbar-group,
 .left-panel,
-.right-panel,
-.launch-panel {
+.right-panel {
   background: rgba(24, 28, 35, var(--surface-alpha));
   border: 1px solid rgba(52, 58, 66, 0.86);
   border-radius: 6px;
@@ -2576,6 +2572,14 @@ textarea {
   padding: 24px;
 }
 
+.launch-panel,
+.settings-panel {
+  background: rgba(58, 62, 68, 0.72);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  backdrop-filter: blur(calc(var(--surface-blur, 0) * 1px)) saturate(1.15);
+  font-size: 11px;
+}
+
 .launch-panel {
   width: min(520px, 100%);
   padding: 8px;
@@ -2590,10 +2594,6 @@ textarea {
   overflow: visible;
   display: flex;
   flex-direction: column;
-  font-size: 11px;
-  background: rgba(58, 62, 68, 0.72);
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  backdrop-filter: blur(calc(var(--surface-blur, 0) * 1px)) saturate(1.15);
 }
 
 .settings-header {

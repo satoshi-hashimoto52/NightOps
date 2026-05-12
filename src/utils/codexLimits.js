@@ -238,21 +238,6 @@ export function calculateUsage({
   const weeklyRemaining = safeWeeklyBaselineTokenEstimate > 0 ? (remainingWeeklyTokens / safeWeeklyBaselineTokenEstimate) * 100 : 0;
   const limit5hRemaining = safeLimit5hBaselineTokenEstimate > 0 ? (remainingLimit5hTokens / safeLimit5hBaselineTokenEstimate) * 100 : 0;
 
-  console.log({
-    baseline: {
-      weekly: safeWeeklyBaselineTokenEstimate,
-      limit5h: safeLimit5hBaselineTokenEstimate
-    },
-    used: {
-      weekly: safeWeeklyUsedTokenEstimate,
-      limit5h: safeLimit5hUsedTokenEstimate
-    },
-    remaining: {
-      weekly: remainingWeeklyTokens,
-      limit5h: remainingLimit5hTokens
-    }
-  });
-
   return {
     weeklyRemaining,
     limit5hRemaining,

@@ -1,54 +1,25 @@
 # Codex Integration
 
-## Codex CLI との連携方法
+## Launch
 
-NightOps は Codex CLI 自体を内包せず、macOS の `Terminal.app` を開いて Codex CLI を実行します。アプリは実行補助と状況監視を担当します。
+- The Launch panel accepts a directory path and a model.
+- It shows a command preview for the final Terminal.app command.
+- Launching uses `osascript` to open Terminal.app and run `codex -m ...`.
 
-## Launch 機能の仕組み
+## Settings
 
-Launch では以下を受け取ります。
+- Codex models are stored in `settings.json`.
+- The selected launch model and usage model are saved separately.
+- Usage divisors are stored for Weekly and 5H calculations.
+- Current remaining percentages are stored as percentages from `0` to `100`.
 
-- directory path
-- model
-- prompt template
+## Usage metrics
 
-main process で AppleScript を組み立て、`osascript` で実行します。
+- `codex:stats` reads `~/.codex/history.jsonl`.
+- The app displays request count, session count, token estimate, 5H remaining, and Weekly remaining.
+- The 5H and Weekly reset times are calculated from the saved reset settings.
 
-```applescript
-tell application "Terminal"
-activate
-do script "cd \"<directory>\" && codex -m '<model>' '<template>'"
-end tell
-```
+## Top bar
 
-補足:
-
-- 文字列は最低限のエスケープを行ってから埋め込む
-- 実行失敗時はエラーを renderer に返す
-- `getSystemStatus(directoryPath)` は選択ディレクトリの空き容量を表示するために使っている
-
-## history.jsonl の扱い
-
-対象ファイル:
-
-```text
-~/.codex/history.jsonl
-```
-
-扱い方:
-
-- 全件読込はしない
-- 末尾側だけを `createReadStream` で読む
-- 最終的に末尾 1000 行を対象に集計する
-- JSON parse 失敗行はスキップする
-- `TopBar` は request / session / token 推定をこの結果から表示する
-
-## トークン推定ロジック
-
-厳密な tokenizer は使わず、各行の文字数を 4 で割った値を切り上げて合算します。
-
-```text
-tokenEstimate += ceil(line.length / 4)
-```
-
-この値はあくまで簡易推定です。実際の API 課金トークン数とは一致しません。
+- The top bar shows Codex request count, token estimate, 5H remaining, and Weekly remaining.
+- Next reset timestamps are displayed next to the remaining percentages.

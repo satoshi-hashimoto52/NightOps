@@ -1,93 +1,37 @@
 # Data Flow
 
-## 全体像
+## Startup
 
-```text
-UI Action
-  ↓
-React Component
-  ↓
-src/utils/*.js
-  ↓
-window.api / window.nightOps
-  ↓
-Electron IPC
-  ↓
-main.js
-  ↓
-Filesystem / systeminformation / osascript
-```
+- `App.jsx` loads settings from `settings.json`.
+- The root directory is restored from settings, or the home directory is used as a fallback.
+- Top bar status is refreshed from the main-process system APIs.
 
-## ファイル読み込み
+## Tree interaction
 
-```text
-FileTree / PreviewPane
-  ↓ selectedFile.path
-fileLoader.readFile(path)
-  ↓
-ipcRenderer.invoke("fs:read")
-  ↓
-main.js: readFileContent()
-  ↓
-fs.stat / fs.readFile
-  ↓
-renderer に内容を返す
-```
+- The tree requests folder contents lazily through `fs:list`.
+- The tree keeps selection and sorting state in the renderer.
+- Tree edits use filesystem IPC calls for create, rename, delete, move, copy, and reveal.
 
-補足:
+## Preview / edit
 
-- 非テキストはエラー扱い
-- 5MB 以上の非 PDF は拒否
-- CSV は renderer 側で最大 1000 行まで表示
-- TREE の Finder ドロップは `File.path` を優先し、取れない場合は `FileReader` にフォールバックする
+- Opening a file creates or activates a tab in the active pane.
+- Text files are watched with a single active file watcher.
+- Editing stays in the renderer and saves through `fs:save`.
+- Markdown tabs keep outline width and outline visibility in client state.
 
-## ファイル変更監視
+## Search and selection
 
-```text
-PreviewPane
-  ↓
-watchFile(path)
-  ↓
-main.js: fs.watch(path)
-  ↓
-ファイル変更
-  ↓
-webContents.send("fs:file-changed", path)
-  ↓
-PreviewPane が再読込
-```
+- `Cmd/Ctrl+F` opens the editor search bar.
+- `Cmd/Ctrl+D` adds the next matching selection.
+- Multi-selection edits are applied in the renderer before saving.
 
-TREE での変更操作:
+## Codex and status
 
-- 内部 D&D は renderer 内で `moveFile(sourcePath, targetDirectoryPath)` を呼ぶ
-- 外部取り込みは `copyFileToDirectory(sourcePath, rootPath)` または `FileReader` + `createFileFromBuffer()` を呼ぶ
+- `codex:stats` reads `~/.codex/history.jsonl` in the main process.
+- `system:get-top-status` returns user, disk, and Git remote branch information.
+- Clicking the Git branch label opens the remote URL in the default browser when it exists.
 
-## Codex ログ解析
+## Launch
 
-```text
-TopBar
-  ↓
-getCodexStats()
-  ↓
-ipcRenderer.invoke("codex:stats")
-  ↓
-main.js: readCodexHistory()
-  ↓
-~/.codex/history.jsonl の末尾だけを読む
-  ↓
-request / session / token を返す
-```
-
-## システム監視
-
-```text
-TopBar
-  ↓
-getSystemUsage()
-  ↓
-ipcRenderer.invoke("system:usage")
-  ↓
-systeminformation.currentLoad / mem
-  ↓
-CPU / MEM を返す
-```
+- Launch Codex sends the selected directory and model to the main process.
+- The main process opens Terminal.app and runs `codex -m ...`.

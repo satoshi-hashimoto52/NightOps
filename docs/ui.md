@@ -1,61 +1,36 @@
 # UI
 
-## レイアウト
+## Layout
 
-```text
-┌──────────────────────────────┐
-│ MONITOR | CODEX | LAUNCH     │
-├─────────────┬───────────────┤
-│ TREE        │ PREVIEW/EDITOR │
-│             │                │
-└─────────────┴───────────────┘
-```
+- Top bar
+- Left tree
+- Right preview / editor area
+- Modal overlays for Launch and Settings
 
-## 画面要素
+## Top bar
 
-### 上部バー
+- Monitor shows CPU name, CPU usage, memory usage, and memory used / total.
+- Codex shows request count, token estimate, 5H remaining, and Weekly remaining.
+- The Git branch label becomes clickable when a remote URL is available.
+- User name and disk free / total are shown in the status strip.
 
-- `Monitor`
-  - CPU 使用率
-  - メモリ使用量
-- `Codex`
-  - request 数
-  - session 数
-  - token 推定
-- `Launch`
-  - Codex CLI 起動の入口
+## Left tree
 
-### 左ペイン
+- Root folder is shown as a file tree.
+- Sorting can be switched between `name`, `ext`, and `update`.
+- The tree supports multi-select, range select, drag move, and context-menu actions.
+- The tree can be collapsed with `Cmd+B`.
 
-- ディレクトリツリー
-- 複数選択、範囲選択、右クリックメニューに対応
-- 展開時のみ子要素を取得
-- 大きすぎるディレクトリは警告行を表示
-- TREE 内ドラッグ移動と Finder からの外部取り込みに対応
-- `F2` でインラインリネーム
-- `Ctrl / Cmd + C / X / V` でコピー / カット / ペースト
-- `Space` で選択ファイルをプレビュー
+## Right side
 
-### 右ペイン
+- Tabs can be dragged between panes.
+- The workspace supports up to two panes.
+- Markdown pages show a preview column and an outline column.
+- The outline can be hidden or resized.
+- Text files open in an editor that supports search, multi-selection editing, and undo / redo.
 
-- 最近開いたファイル
-- ファイル名とパス
-- プレビュー / 編集切替
-- Save ボタン
-- ファイル変更時は監視結果に応じて再読込する
+## Overlays
 
-## UX の意図
-
-- 上部に状況確認と実行入口を集約し、視線移動を減らす
-- 左で対象選択、右で内容確認という標準的な流れにする
-- ターミナルを主役にしたまま、必要な補助操作だけを横に置く
-- ファイル検索や Launch はショートカットでも扱えるようにする
-- TREE はエクスプローラー寄りの操作感を優先する
-- 選択とフォーカスを分離し、キーボード中心で操作できるようにする
-
-## ダークテーマ設計思想
-
-- 真っ黒ではなく、少し明るさを持つダークトーンを採用
-- パネルを分けて視認性を上げる
-- アクセントカラーは維持しつつ、hover や影は控えめにする
-- 余白は 8px ベースで揃え、密度を保ちながら窮屈さを避ける
+- Launch Codex and Settings are modal panels.
+- Both use the same panel shell style.
+- Settings is resizable from the bottom-right corner and draggable from the header.

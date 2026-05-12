@@ -57,6 +57,31 @@ function clampBlurStrength(value) {
   return Math.max(0, Math.min(100, parsed));
 }
 
+function normalizeOpacityPercent(value, fallback) {
+  const parsed = Number(value);
+  if (Number.isNaN(parsed)) {
+    return fallback;
+  }
+
+  if (parsed >= 0 && parsed <= 1) {
+    return Math.round(parsed * 100);
+  }
+
+  return Math.max(0, Math.min(100, parsed));
+}
+
+function normalizeSettingsOpacity(settings) {
+  if (!settings || typeof settings !== "object") {
+    return settings;
+  }
+
+  return {
+    ...settings,
+    backgroundOpacity: normalizeOpacityPercent(settings.backgroundOpacity, 18),
+    containerOpacity: normalizeOpacityPercent(settings.containerOpacity, 28)
+  };
+}
+
 async function findFileByName(rootPath, query) {
   const normalizedQuery = query.trim().toLowerCase();
   if (!normalizedQuery) {
@@ -122,8 +147,8 @@ export default function App() {
     weeklyNextResetAt: "",
     limit5hBaselineTokenEstimate: 0,
     weeklyBaselineTokenEstimate: 0,
-    backgroundOpacity: 0.32,
-    containerOpacity: 0.46,
+    backgroundOpacity: 0.18,
+    containerOpacity: 0.28,
     backgroundBlur: 28,
     uiBackgroundBlur: 28,
     markdownHeadingColors: ["#8fd3ff", "#7bdc6a", "#f5c542", "#c18cff", "#e88787", "#9dd6c4"],
@@ -153,9 +178,12 @@ export default function App() {
     );
   }, []);
 
+  const backgroundOpacity = normalizeOpacityPercent(settings.backgroundOpacity, 18);
+  const containerOpacity = normalizeOpacityPercent(settings.containerOpacity, 28);
+
   const appStyle = {
-    "--app-shell-alpha": String(settings.backgroundOpacity),
-    "--surface-alpha": String(settings.containerOpacity),
+    "--app-shell-alpha": String(backgroundOpacity / 100),
+    "--surface-alpha": String(containerOpacity / 100),
     "--app-shell-blur": String(clampBlurStrength(settings.backgroundBlur)),
     "--surface-blur": String(clampBlurStrength(settings.uiBackgroundBlur ?? settings.backgroundBlur ?? 0))
   };
@@ -192,8 +220,9 @@ export default function App() {
     async function init() {
       try {
         const result = await getSettings();
-        setSettings(result);
-        setRootPath(result.initialDirectory);
+        const normalizedResult = normalizeSettingsOpacity(result);
+        setSettings(normalizedResult);
+        setRootPath(normalizedResult.initialDirectory);
       } catch (error) {
         setNotice(error?.message || "Failed to load initial directory");
       }
@@ -318,7 +347,7 @@ export default function App() {
         if (updated) {
           const saved = await saveSettings(nextSettings);
           if (!cancelled) {
-            setSettings(saved);
+            setSettings(normalizeSettingsOpacity(saved));
           }
         }
       } catch {
@@ -445,7 +474,7 @@ export default function App() {
 
   async function handleDirectoryChange(nextPath) {
     const nextSettings = await saveSettings({ ...settings, initialDirectory: nextPath });
-    setSettings(nextSettings);
+    setSettings(normalizeSettingsOpacity(nextSettings));
     setRootPath(nextPath);
     setSelectedFile(null);
     setNotice("Directory applied");
@@ -515,7 +544,7 @@ export default function App() {
 
   async function handleLaunchModelChange(nextModel) {
     const nextSettings = await saveSettings({ ...settings, selectedLaunchModel: nextModel });
-    setSettings(nextSettings);
+    setSettings(normalizeSettingsOpacity(nextSettings));
   }
 
   async function handleSaveSettings(nextSettings, options = {}) {
@@ -525,7 +554,7 @@ export default function App() {
       setPreviewMarkdownHeadingSizes(nextSettings.markdownHeadingSizes || []);
       setRootPath(nextSettings.initialDirectory || "");
       const saved = await saveSettings(nextSettings);
-      setSettings(saved);
+      setSettings(normalizeSettingsOpacity(saved));
       setPreviewMarkdownHeadingColors(saved.markdownHeadingColors || []);
       setPreviewMarkdownHeadingSizes(saved.markdownHeadingSizes || []);
       setRootPath(saved.initialDirectory);

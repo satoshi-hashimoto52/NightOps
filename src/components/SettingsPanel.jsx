@@ -15,6 +15,20 @@ const DEFAULT_MODEL_OPTIONS = ["gpt-5.5", "gpt-5.4", "gpt-5.4-mini", "gpt-5.3-co
 
 const DEFAULT_MARKDOWN_HEADING_COLORS = ["#8fd3ff", "#7bdc6a", "#f5c542", "#c18cff", "#e88787", "#9dd6c4"];
 const DEFAULT_MARKDOWN_HEADING_SIZES = [1.65, 1.4, 1.22, 1.08, 0.98, 0.98];
+
+function normalizeOpacityPercent(value, fallback) {
+  const parsed = Number(value);
+  if (Number.isNaN(parsed)) {
+    return fallback;
+  }
+
+  if (parsed >= 0 && parsed <= 1) {
+    return Math.round(parsed * 100);
+  }
+
+  return Math.max(0, Math.min(100, parsed));
+}
+
 function getInitialPanelPosition() {
   if (typeof window === "undefined") {
     return { x: 16, y: 16 };
@@ -64,8 +78,12 @@ export default function SettingsPanel({
   const [weeklyRemainingPercent, setWeeklyRemainingPercent] = useState(
     String(settings.weeklyRemainingPercent ?? 100)
   );
-  const [backgroundOpacity, setBackgroundOpacity] = useState(String(settings.backgroundOpacity ?? 0.32));
-  const [containerOpacity, setContainerOpacity] = useState(String(settings.containerOpacity ?? 0.46));
+  const [backgroundOpacity, setBackgroundOpacity] = useState(
+    String(normalizeOpacityPercent(settings.backgroundOpacity, 18))
+  );
+  const [containerOpacity, setContainerOpacity] = useState(
+    String(normalizeOpacityPercent(settings.containerOpacity, 28))
+  );
   const [backgroundBlur, setBackgroundBlur] = useState(String(settings.backgroundBlur ?? 28));
   const [uiBackgroundBlur, setUiBackgroundBlur] = useState(String(settings.uiBackgroundBlur ?? settings.backgroundBlur ?? 28));
   const [limit5hResetTime, setLimit5hResetTime] = useState(settings.limit5hResetTime || DEFAULT_LIMIT5H_RESET_TIME);
@@ -125,8 +143,8 @@ export default function SettingsPanel({
     setLimit5hDivisor(String(settings.limit5hDivisor || 350));
     setLimit5hRemainingPercent(String(settings.limit5hRemainingPercent ?? 100));
     setWeeklyRemainingPercent(String(settings.weeklyRemainingPercent ?? 100));
-    setBackgroundOpacity(String(settings.backgroundOpacity ?? 0.32));
-    setContainerOpacity(String(settings.containerOpacity ?? 0.46));
+    setBackgroundOpacity(String(normalizeOpacityPercent(settings.backgroundOpacity, 18)));
+    setContainerOpacity(String(normalizeOpacityPercent(settings.containerOpacity, 28)));
     setBackgroundBlur(String(settings.backgroundBlur ?? 28));
     setUiBackgroundBlur(String(settings.uiBackgroundBlur ?? settings.backgroundBlur ?? 28));
     setLimit5hResetTime(settings.limit5hResetTime || DEFAULT_LIMIT5H_RESET_TIME);
@@ -190,6 +208,10 @@ export default function SettingsPanel({
     const currentUsed = kind === "limit5h" ? usagePreview.limit5hUsedTokenEstimate : usagePreview.weeklyUsedTokenEstimate;
     const targetRemaining = Number(kind === "limit5h" ? limit5hRemainingPercent : weeklyRemainingPercent);
     const baselineKey = kind === "limit5h" ? "limit5hBaselineTokenEstimate" : "weeklyBaselineTokenEstimate";
+    const nextLimit5hRemainingPercent =
+      kind === "limit5h" ? targetRemaining : Number(settings.limit5hRemainingPercent) || 100;
+    const nextWeeklyRemainingPercent =
+      kind === "weekly" ? targetRemaining : Number(settings.weeklyRemainingPercent) || 100;
     const ratio = Math.max(0.01, 1 - Number(targetRemaining) / 100);
     const nextBaseline = currentUsed / ratio;
 
@@ -201,6 +223,8 @@ export default function SettingsPanel({
     onSave(
       {
         ...settings,
+        limit5hRemainingPercent: nextLimit5hRemainingPercent,
+        weeklyRemainingPercent: nextWeeklyRemainingPercent,
         [baselineKey]: nextBaseline,
         limit5hBaselineTokenEstimate:
           kind === "limit5h" ? nextBaseline : Number(settings.limit5hBaselineTokenEstimate) || 0,
@@ -314,8 +338,8 @@ export default function SettingsPanel({
     const nextContainerOpacity = Number(containerOpacity);
     const nextBackgroundBlur = Number(backgroundBlur);
 
-    if (!(nextBackgroundOpacity >= 0 && nextBackgroundOpacity <= 1) || !(nextContainerOpacity >= 0 && nextContainerOpacity <= 1)) {
-      setError("Opacity must be between 0 and 1");
+    if (!(nextBackgroundOpacity >= 0 && nextBackgroundOpacity <= 100) || !(nextContainerOpacity >= 0 && nextContainerOpacity <= 100)) {
+      setError("Opacity must be between 0 and 100");
       return;
     }
 
@@ -344,6 +368,8 @@ export default function SettingsPanel({
         selectedLaunchModel: nextLaunchModel,
         weeklyDivisor: Number(weeklyDivisor),
         limit5hDivisor: Number(limit5hDivisor),
+        limit5hRemainingPercent: Number(limit5hRemainingPercent),
+        weeklyRemainingPercent: Number(weeklyRemainingPercent),
         limit5hResetTime,
         weeklyResetMonth: Number(weeklyResetMonth),
         weeklyResetDay: Number(weeklyResetDay),
@@ -441,24 +467,24 @@ export default function SettingsPanel({
             <div className="settings-appearance-grid">
               <label className="field">
                 <span>Background Opacity</span>
-                <FieldHelp>全体の透過度。</FieldHelp>
+                <FieldHelp>100で不透明、0でほぼ透明。</FieldHelp>
                 <input
                   type="number"
                   min="0"
-                  max="1"
-                  step="0.01"
+                  max="100"
+                  step="1"
                   value={backgroundOpacity}
                   onChange={(event) => setBackgroundOpacity(event.target.value)}
                 />
               </label>
               <label className="field">
                 <span>Container Opacity</span>
-                <FieldHelp>パネルの透過度。</FieldHelp>
+                <FieldHelp>100で不透明、0でほぼ透明。</FieldHelp>
                 <input
                   type="number"
                   min="0"
-                  max="1"
-                  step="0.01"
+                  max="100"
+                  step="1"
                   value={containerOpacity}
                   onChange={(event) => setContainerOpacity(event.target.value)}
                 />
