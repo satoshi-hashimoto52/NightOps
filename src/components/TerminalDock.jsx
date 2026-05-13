@@ -1,4 +1,15 @@
-import { useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { Terminal } from "@xterm/xterm";
+import { FitAddon } from "@xterm/addon-fit";
+import "@xterm/xterm/css/xterm.css";
+import {
+  onTerminalSessionData,
+  onTerminalSessionExit,
+  killTerminalSession,
+  resizeTerminalSession,
+  startTerminalSession,
+  writeTerminalSession
+} from "../utils/system";
 
 const MAX_PANES = 3;
 const MIN_RIGHT_WIDTH = 220;
@@ -44,17 +55,471 @@ function buildPaneGridTemplate(paneSizes) {
   return parts.join(" ");
 }
 
+function TerminalPane({
+  pane,
+  isActive,
+  rootPath,
+  paneCount,
+  layoutDock,
+  layoutVisible,
+  onSelectPane,
+  onRemovePane,
+  onRegisterTerminalActions,
+  onRegisterPaneBody
+}) {
+  const terminalHostRef = useRef(null);
+  const terminalRef = useRef(null);
+  const fitAddonRef = useRef(null);
+  const currentLineRef = useRef("");
+  const isActiveRef = useRef(isActive);
+  const isMountedRef = useRef(false);
+  const ptyIdRef = useRef("");
+  const ptyStateRef = useRef({
+    starting: false,
+    connected: false,
+    failed: false,
+    errorMessage: ""
+  });
+  const [ptyState, setPtyState] = useState({
+    starting: false,
+    connected: false,
+    failed: false,
+    errorMessage: ""
+  });
+
+  function fitTerminal() {
+    const host = terminalHostRef.current;
+    if (!host || !fitAddonRef.current) {
+      return;
+    }
+
+    const rect = host.getBoundingClientRect();
+    if (!(rect.width > 0 && rect.height > 0)) {
+      return;
+    }
+
+    fitAddonRef.current.fit();
+    const ptyId = ptyIdRef.current;
+    if (isActiveRef.current && terminalRef.current && ptyId) {
+      void resizeTerminalSession({
+        ptyId,
+        cols: terminalRef.current.cols,
+        rows: terminalRef.current.rows
+      });
+    }
+  }
+
+  useEffect(() => {
+    isActiveRef.current = isActive;
+  }, [isActive]);
+
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    ptyStateRef.current = ptyState;
+  }, [ptyState]);
+
+  useEffect(() => {
+    if (!terminalHostRef.current || terminalRef.current) {
+      return undefined;
+    }
+
+    const term = new Terminal({
+      cursorBlink: true,
+      fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+      fontSize: 12,
+      lineHeight: 1.35,
+      allowTransparency: true,
+      theme: {
+        background: "rgba(0, 0, 0, 0)",
+        foreground: "#e5e7eb",
+        cursor: "#facc15"
+      }
+    });
+    const fitAddon = new FitAddon();
+
+    term.loadAddon(fitAddon);
+    term.open(terminalHostRef.current);
+
+    const handleData = term.onData((data) => {
+      if (!isActiveRef.current) {
+        return;
+      }
+
+      const ptyId = ptyIdRef.current;
+      if (!ptyId) {
+        if (!ptyStateRef.current.failed) {
+          return;
+        }
+
+        if (data === "\r") {
+          term.write("\r\n❯ ");
+          currentLineRef.current = "";
+          return;
+        }
+
+        if (data === "\u007f") {
+          if (currentLineRef.current.length > 0) {
+            currentLineRef.current = currentLineRef.current.slice(0, -1);
+            term.write("\b \b");
+          }
+          return;
+        }
+
+        if (data === "\u0003") {
+          currentLineRef.current = "";
+          term.write("^C\r\n❯ ");
+          return;
+        }
+
+        currentLineRef.current += data;
+        term.write(data);
+        return;
+      }
+
+      currentLineRef.current += data;
+      void writeTerminalSession({
+        ptyId,
+        data
+      });
+    });
+
+    terminalRef.current = term;
+    fitAddonRef.current = fitAddon;
+    onRegisterTerminalActions?.(pane.id, {
+      clear: () => {
+        currentLineRef.current = "";
+        const currentPtyId = ptyIdRef.current;
+        if (currentPtyId) {
+          void writeTerminalSession({
+            ptyId: currentPtyId,
+            data: "\u000c"
+          });
+          return;
+        }
+
+        term.clear();
+        term.write("❯ ");
+      },
+      focus: () => {
+        term.focus();
+      },
+      write: (data) => {
+        term.write(data);
+      },
+      resize: () => {
+        const currentPtyId = ptyIdRef.current;
+        if (terminalRef.current && currentPtyId) {
+          void resizeTerminalSession({
+            ptyId: currentPtyId,
+            cols: terminalRef.current.cols,
+            rows: terminalRef.current.rows
+          });
+        }
+      },
+      kill: () => {
+        const currentPtyId = ptyIdRef.current;
+        if (currentPtyId) {
+          void killTerminalSession({ ptyId: currentPtyId });
+        }
+      }
+    });
+
+    requestAnimationFrame(() => {
+      fitTerminal();
+      term.focus();
+    });
+
+    return () => {
+      handleData.dispose();
+      onRegisterTerminalActions?.(pane.id, null);
+      term.dispose();
+      terminalRef.current = null;
+      fitAddonRef.current = null;
+      currentLineRef.current = "";
+    };
+  }, [pane.id, onRegisterTerminalActions]);
+
+  useEffect(() => {
+    if (!terminalHostRef.current || !fitAddonRef.current) {
+      return undefined;
+    }
+
+    const observer = new ResizeObserver(() => {
+      requestAnimationFrame(() => {
+        fitTerminal();
+      });
+    });
+
+    observer.observe(terminalHostRef.current);
+    return () => {
+      observer.disconnect();
+    };
+  }, []);
+
+  useEffect(() => {
+    let cleanup = null;
+    let cancelled = false;
+
+    async function subscribe() {
+      cleanup = await onTerminalSessionData((payload) => {
+        if (cancelled) {
+          return;
+        }
+
+        if (!isMountedRef.current) {
+          return;
+        }
+
+        if (!payload || payload.paneId !== pane.id) {
+          return;
+        }
+
+        if (payload.ptyId && ptyIdRef.current && payload.ptyId !== ptyIdRef.current) {
+          return;
+        }
+
+        if (typeof payload.data === "string" && payload.data.length > 0) {
+          terminalRef.current?.write(payload.data);
+        }
+      });
+    }
+
+    subscribe();
+
+    return () => {
+      cancelled = true;
+      if (typeof cleanup === "function") {
+        cleanup();
+      }
+    };
+  }, [pane.id]);
+
+  useEffect(() => {
+    let cleanup = null;
+    let cancelled = false;
+
+    async function subscribe() {
+      cleanup = await onTerminalSessionExit((payload) => {
+        if (cancelled) {
+          return;
+        }
+
+        if (!isMountedRef.current) {
+          return;
+        }
+
+        if (!payload || payload.paneId !== pane.id) {
+          return;
+        }
+
+        if (payload.ptyId && ptyIdRef.current && payload.ptyId !== ptyIdRef.current) {
+          return;
+        }
+
+        if (ptyIdRef.current === payload.ptyId) {
+          ptyIdRef.current = "";
+        }
+
+        const exitCode = Number.isFinite(payload.exitCode) ? payload.exitCode : 0;
+        const signalText = payload.signal ? `, signal ${payload.signal}` : "";
+        terminalRef.current?.write(`\r\n[pty exited: ${exitCode}${signalText}]\r\n❯ `);
+        setPtyState({
+          starting: false,
+          connected: false,
+          failed: true,
+          errorMessage: "PTY exited"
+        });
+      });
+    }
+
+    subscribe();
+
+    return () => {
+      cancelled = true;
+      if (typeof cleanup === "function") {
+        cleanup();
+      }
+    };
+  }, [pane.id]);
+
+  useEffect(() => {
+    if (!rootPath) {
+      return undefined;
+    }
+
+    let cancelled = false;
+    isMountedRef.current = true;
+
+    setPtyState({
+      starting: true,
+      connected: false,
+      failed: false,
+      errorMessage: ""
+    });
+
+    void startTerminalSession({
+      paneId: pane.id,
+      cwd: rootPath,
+      cols: terminalRef.current?.cols || 80,
+      rows: terminalRef.current?.rows || 24
+    })
+      .then((result) => {
+        if (cancelled) {
+          if (result?.ptyId) {
+            void killTerminalSession({ ptyId: result.ptyId });
+          }
+          return;
+        }
+
+        ptyIdRef.current = result?.ptyId || "";
+        setPtyState({
+          starting: false,
+          connected: true,
+          failed: false,
+          errorMessage: ""
+        });
+
+        requestAnimationFrame(() => {
+          fitTerminal();
+          terminalRef.current?.focus();
+        });
+      })
+      .catch((error) => {
+        if (cancelled) {
+          return;
+        }
+
+        ptyIdRef.current = "";
+        const errorMessage = error?.message || String(error);
+        setPtyState({
+          starting: false,
+          connected: false,
+          failed: true,
+          errorMessage
+        });
+
+        if (terminalRef.current) {
+          terminalRef.current.write(`\r\n[terminal] failed to start PTY\r\n[terminal] ${errorMessage}\r\n❯ `);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+      isMountedRef.current = false;
+      const ptyId = ptyIdRef.current;
+      ptyIdRef.current = "";
+      if (ptyId) {
+        void killTerminalSession({ ptyId });
+      }
+    };
+  }, [pane.id, rootPath]);
+
+  useEffect(() => {
+    requestAnimationFrame(() => {
+      fitTerminal();
+    });
+  }, [layoutDock, layoutVisible, paneCount]);
+
+  useEffect(() => {
+    requestAnimationFrame(() => {
+      if (isActive) {
+        terminalRef.current?.focus();
+      }
+    });
+  }, [isActive]);
+
+  const ptyConnected = ptyState.connected;
+  const ptyFailed = ptyState.failed;
+  const ptyStarting = ptyState.starting;
+  const paneBodyClassName = `terminal-pane-body terminal-pane-content ${ptyFailed ? "failed" : ""}`;
+
+  const paneLogs = Array.isArray(pane.logs)
+    ? pane.logs
+    : Array.isArray(pane.entries)
+      ? pane.entries.map((message, messageIndex) => ({
+          id: `${pane.id}-legacy-${messageIndex}`,
+          level: "info",
+          message,
+          timestamp: Date.now()
+        }))
+      : [];
+
+  return (
+    <article
+      key={pane.id}
+      className={`terminal-pane ${isActive ? "active" : ""} ${ptyStarting ? "starting" : ""} ${ptyFailed ? "failed" : ""}`}
+      onPointerDown={() => {
+        isActiveRef.current = true;
+        onSelectPane(pane.id);
+      }}
+    >
+      <div className="terminal-pane-header">
+        <span className="terminal-pane-title">{pane.title}</span>
+        <span className="terminal-pane-status">
+          {ptyStarting ? "Starting" : ptyConnected ? "Running" : ptyFailed ? "Stopped" : "Idle"}
+        </span>
+        <button
+          type="button"
+          className="terminal-pane-close"
+          onClick={(event) => {
+            event.stopPropagation();
+            onRemovePane(pane.id);
+          }}
+        >
+          ×
+        </button>
+      </div>
+      <div
+        className={paneBodyClassName}
+        ref={(element) => {
+          onRegisterPaneBody?.(pane.id, element);
+        }}
+      >
+        <div className="terminal-pane-log">
+          {paneLogs.length > 0 ? (
+            paneLogs.map((log) => (
+              <div key={log.id} className={`terminal-log-line terminal-log-${log.level || "info"}`}>
+                <span className="terminal-log-time">{formatLogTime(log.timestamp)}</span>
+                <span className="terminal-log-level">{String(log.level || "info").toUpperCase()}</span>
+                <span className="terminal-log-message">{log.message}</span>
+              </div>
+            ))
+          ) : (
+            <div className="terminal-pane-empty">No logs.</div>
+          )}
+        </div>
+        <div
+          className="terminal-xterm-host"
+          ref={terminalHostRef}
+          onPointerDown={(event) => {
+            event.stopPropagation();
+            onSelectPane(pane.id);
+            requestAnimationFrame(() => {
+              terminalRef.current?.focus();
+            });
+          }}
+        />
+      </div>
+    </article>
+  );
+}
+
 export default function TerminalDock({
   layout,
   onChangeLayout,
   rootPath,
-  onClearPaneLogs,
-  onChangePaneInput,
-  onRunCommand
+  onClearPaneLogs
 }) {
   const resizeStateRef = useRef(null);
   const paneResizeStateRef = useRef(null);
   const paneBodyRefs = useRef(new Map());
+  const paneTerminalActionsRef = useRef(new Map());
 
   useEffect(() => {
     return () => {
@@ -80,7 +545,6 @@ export default function TerminalDock({
   const panes = Array.isArray(layout.panes) ? layout.panes : [];
   const paneSizes = normalizePaneSizes(panes, layout.paneSizes);
   const activePaneId = layout.activePaneId || panes[0]?.id || "";
-  const activePane = panes.find((pane) => pane.id === activePaneId) || panes[0] || null;
   const dockClassName = layout.dock === "bottom" ? "bottom" : "right";
   const paneLogSignature = panes.map((pane) => `${pane.id}:${(pane.logs || pane.entries || []).length}`).join("|");
   const nextSizeStyle =
@@ -98,6 +562,42 @@ export default function TerminalDock({
       dock: nextDock,
       size: clampDockSize(nextDock, current.size)
     }));
+  }
+
+  const registerTerminalActions = useCallback((paneId, actions) => {
+    if (!paneId) {
+      return;
+    }
+
+    if (actions) {
+      paneTerminalActionsRef.current.set(paneId, actions);
+      return;
+    }
+
+    paneTerminalActionsRef.current.delete(paneId);
+  }, []);
+
+  const registerPaneBody = useCallback((paneId, element) => {
+    if (!paneId) {
+      return;
+    }
+
+    if (element) {
+      paneBodyRefs.current.set(paneId, element);
+      return;
+    }
+
+    paneBodyRefs.current.delete(paneId);
+  }, []);
+
+  function clearLogs() {
+    const targetPaneId = layout.activePaneId || panes[0]?.id;
+    if (!targetPaneId) {
+      return;
+    }
+
+    onClearPaneLogs?.(targetPaneId);
+    paneTerminalActionsRef.current.get(targetPaneId)?.clear?.();
   }
 
   function addPane() {
@@ -280,87 +780,20 @@ export default function TerminalDock({
   const paneChildren = [];
   panes.forEach((pane, index) => {
     const isActive = pane.id === activePaneId;
-    const isRunning = Boolean(pane.running);
-    const paneLogs = Array.isArray(pane.logs)
-      ? pane.logs
-      : Array.isArray(pane.entries)
-        ? pane.entries.map((message, messageIndex) => ({
-            id: `${pane.id}-legacy-${messageIndex}`,
-            level: "info",
-            message,
-            timestamp: Date.now()
-          }))
-        : [];
     paneChildren.push(
-      <article
+      <TerminalPane
         key={pane.id}
-        className={`terminal-pane ${isActive ? "active" : ""} ${isRunning ? "running" : ""}`}
-        onClick={() => selectPane(pane.id)}
-      >
-        <div className="terminal-pane-header">
-          <span className="terminal-pane-title">{pane.title}</span>
-          <button
-            type="button"
-            className="terminal-pane-close"
-            onClick={(event) => {
-              event.stopPropagation();
-              removePane(pane.id);
-            }}
-          >
-            ×
-          </button>
-        </div>
-        <div
-          className="terminal-pane-body terminal-pane-content"
-          ref={(element) => {
-            if (element) {
-              paneBodyRefs.current.set(pane.id, element);
-              return;
-            }
-            paneBodyRefs.current.delete(pane.id);
-          }}
-        >
-          <div className="terminal-pane-log">
-            {paneLogs.length > 0 ? (
-              paneLogs.map((log) => (
-                <div key={log.id} className={`terminal-log-line terminal-log-${log.level || "info"}`}>
-                  <span className="terminal-log-time">{formatLogTime(log.timestamp)}</span>
-                  <span className="terminal-log-level">{String(log.level || "info").toUpperCase()}</span>
-                  <span className="terminal-log-message">{log.message}</span>
-                </div>
-              ))
-            ) : (
-              <div className="terminal-pane-empty">No logs.</div>
-            )}
-          </div>
-          <div className="terminal-pane-prompt">
-            <span className="terminal-pane-prompt-symbol">❯</span>
-            <span className="terminal-pane-prompt-path">{rootPath || "~"}</span>
-          </div>
-          <form
-            className="terminal-command-form"
-            onSubmit={(event) => {
-              event.preventDefault();
-              onRunCommand?.(pane.id);
-            }}
-          >
-            <span className="terminal-command-prompt">❯</span>
-            <input
-              className="terminal-command-input"
-              type="text"
-              value={pane.inputValue || ""}
-              placeholder={isRunning ? "Running..." : "Type a command"}
-              spellCheck="false"
-              autoCapitalize="off"
-              autoCorrect="off"
-              autoComplete="off"
-              disabled={isRunning}
-              onChange={(event) => onChangePaneInput?.(pane.id, event.target.value)}
-            />
-          </form>
-          {activePane?.id === pane.id ? <div className="terminal-pane-active-marker">ACTIVE</div> : null}
-        </div>
-      </article>
+        pane={pane}
+        isActive={isActive}
+        rootPath={rootPath}
+        paneCount={panes.length}
+        layoutDock={layout.dock}
+        layoutVisible={layout.visible}
+        onSelectPane={selectPane}
+        onRemovePane={removePane}
+        onRegisterTerminalActions={registerTerminalActions}
+        onRegisterPaneBody={registerPaneBody}
+      />
     );
 
     if (index < panes.length - 1) {
@@ -377,12 +810,12 @@ export default function TerminalDock({
     }
   });
 
-  if (!layout?.visible) {
-    return null;
-  }
-
+  const isHidden = !layout.visible;
   return (
-    <section className={`terminal-dock terminal-dock-${dockClassName}`} style={nextSizeStyle}>
+    <section
+      className={`terminal-dock terminal-dock-${dockClassName} ${isHidden ? `is-hidden is-${dockClassName}` : ""}`}
+      style={nextSizeStyle}
+    >
       <header className="terminal-dock-header">
         <span className="terminal-dock-title">TERMINAL</span>
         <div className="terminal-dock-toolbar">
@@ -397,7 +830,7 @@ export default function TerminalDock({
           <button type="button" className="terminal-dock-action" onClick={addPane}>
             +
           </button>
-          <button type="button" className="terminal-dock-action" onClick={() => onClearPaneLogs?.(layout.activePaneId)}>
+          <button type="button" className="terminal-dock-action" onClick={clearLogs}>
             Clear
           </button>
           <button type="button" className="terminal-dock-action terminal-dock-close" onClick={() => onChangeLayout((current) => ({ ...current, visible: false }))}>

@@ -1124,8 +1124,6 @@ export default function App() {
               onChangeLayout={setTerminalLayout}
               rootPath={rootPath}
               onClearPaneLogs={clearTerminalPaneLogs}
-              onChangePaneInput={updateTerminalPaneInput}
-              onRunCommand={runTerminalCommand}
             />
           </div>
         </main>

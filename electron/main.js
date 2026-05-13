@@ -1,12 +1,13 @@
-import { app, BrowserWindow, dialog, ipcMain } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, webContents } from "electron";
 import { clipboard, shell } from "electron";
 import fs from "fs/promises";
-import { createReadStream, existsSync, watch } from "fs";
+import { chmodSync, createReadStream, existsSync, statSync, watch } from "fs";
 import os from "os";
 import path from "path";
 import { exec, execFile } from "child_process";
 import { promisify } from "util";
 import { fileURLToPath } from "url";
+import * as nodePtyModule from "node-pty";
 import si from "systeminformation";
 import {
   DEFAULT_LIMIT5H_RESET_TIME,
@@ -59,6 +60,9 @@ const DEFAULT_LIMITS_SETTINGS = {
   limit5hBaselineTokenEstimate: 0,
   weeklyBaselineTokenEstimate: 0
 };
+
+const terminalSessions = new Map();
+const nodePty = nodePtyModule.default ?? nodePtyModule;
 
 function normalizeOpacityPercent(value, fallback) {
   const parsed = Number(value);
@@ -157,6 +161,235 @@ function focusWindow() {
   window.focus();
   window.moveTop();
   return { ok: true };
+}
+
+function resolveShellCandidates() {
+  const candidates = [process.env.SHELL, "/bin/zsh", "/bin/bash", "/bin/sh"];
+  const nextCandidates = [];
+
+  for (const candidate of candidates) {
+    if (typeof candidate !== "string" || candidate.length === 0) {
+      continue;
+    }
+
+    if (existsSync(candidate) && !nextCandidates.includes(candidate)) {
+      nextCandidates.push(candidate);
+    }
+  }
+
+  return nextCandidates;
+}
+
+function resolveTerminalCwd(cwd) {
+  const candidates = [cwd, process.cwd(), os.homedir()].filter((value) => typeof value === "string" && value.length > 0);
+  for (const candidate of candidates) {
+    try {
+      const stats = existsSync(candidate) ? statSync(candidate) : null;
+      if (stats?.isDirectory()) {
+        return candidate;
+      }
+    } catch {
+      continue;
+    }
+  }
+
+  return process.platform === "darwin" ? "/tmp" : "/";
+}
+
+// node-pty prebuilt spawn-helper can lose its execute bit in some installs.
+function ensureNodePtySpawnHelperExecutable() {
+  const helperRelativePath = path.join(
+    "node_modules",
+    "node-pty",
+    "prebuilds",
+    `${process.platform}-${process.arch}`,
+    "spawn-helper"
+  );
+  const candidates = [
+    path.resolve(__dirname, "..", helperRelativePath),
+    path.join(app.getAppPath(), helperRelativePath),
+    path.join(process.resourcesPath || "", "app.asar.unpacked", helperRelativePath)
+  ].filter((candidate) => typeof candidate === "string" && candidate.length > 0);
+
+  for (const helperPath of candidates) {
+    try {
+      if (!existsSync(helperPath)) {
+        continue;
+      }
+
+      const currentMode = statSync(helperPath).mode;
+      if ((currentMode & 0o111) === 0) {
+        chmodSync(helperPath, currentMode | 0o755);
+      }
+      return helperPath;
+    } catch (error) {
+      console.warn("[terminal:pty] failed to ensure spawn-helper executable", {
+        helperPath,
+        error: error?.message || error
+      });
+    }
+  }
+
+  return null;
+}
+
+function getTerminalWebContents(senderId) {
+  const contents = webContents.fromId(senderId);
+  if (!contents || contents.isDestroyed()) {
+    return;
+  }
+
+  return contents;
+}
+
+function sendTerminalSessionEvent(session, channel, payload) {
+  const contents = getTerminalWebContents(session.senderId);
+  if (!contents) {
+    return;
+  }
+
+  contents.send(channel, payload);
+}
+
+function killTerminalSessionById(ptyId) {
+  const session = terminalSessions.get(ptyId);
+  if (!session) {
+    return false;
+  }
+
+  try {
+    session.ptyProcess.kill();
+  } catch (error) {
+    console.warn("[terminal:pty] kill failed", {
+      ptyId,
+      error: error?.message || error
+    });
+  } finally {
+    terminalSessions.delete(ptyId);
+  }
+
+  return true;
+}
+
+function killTerminalSessionsByPaneId(paneId, senderId = null) {
+  let killed = false;
+
+  for (const [ptyId, session] of terminalSessions.entries()) {
+    if (session.paneId !== paneId) {
+      continue;
+    }
+
+    if (senderId != null && session.senderId !== senderId) {
+      continue;
+    }
+
+    try {
+      session.ptyProcess.kill();
+    } catch (error) {
+      console.warn("[terminal:pty] kill failed", {
+        ptyId,
+        paneId,
+        error: error?.message || error
+      });
+    } finally {
+      terminalSessions.delete(ptyId);
+    }
+
+    killed = true;
+  }
+
+  return killed;
+}
+
+function destroyAllTerminalSessions() {
+  for (const ptyId of Array.from(terminalSessions.keys())) {
+    killTerminalSessionById(ptyId);
+  }
+
+  return true;
+}
+
+function ensureTerminalSession({ paneId, cwd, cols, rows, senderId }) {
+  const nextCwd = resolveTerminalCwd(cwd);
+  ensureNodePtySpawnHelperExecutable();
+
+  const shells = resolveShellCandidates();
+  if (shells.length === 0) {
+    throw new Error("No available shell found. Tried SHELL, /bin/zsh, /bin/bash, /bin/sh.");
+  }
+
+  if (paneId) {
+    killTerminalSessionsByPaneId(paneId, senderId);
+  }
+
+  const ptyOptions = (shell) => ({
+    name: "xterm-256color",
+    cols: Math.max(1, Number(cols) || 80),
+    rows: Math.max(1, Number(rows) || 24),
+    cwd: nextCwd,
+    env: {
+      ...process.env,
+      SHELL: shell,
+      TERM: "xterm-256color",
+      PATH:
+        process.env.PATH ||
+        "/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+    }
+  });
+
+  let ptyProcess = null;
+  let lastError = null;
+  let activeShell = "";
+
+  for (const shell of shells) {
+    try {
+      ptyProcess = nodePty.spawn(shell, [], ptyOptions(shell));
+      activeShell = shell;
+      break;
+    } catch (error) {
+      lastError = error;
+      ptyProcess = null;
+      console.warn("[terminal:pty] spawn failed", { shell, cwd: nextCwd, error: error?.message || error });
+    }
+  }
+
+  if (!ptyProcess) {
+    throw new Error(
+      `Failed to start PTY. cwd=${nextCwd}, reason=${lastError?.message || "unknown"}`
+    );
+  }
+
+  const ptyId = `pty-${paneId || "pane"}-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
+  const session = {
+    ptyId,
+    paneId: paneId || "",
+    cwd: nextCwd,
+    shell: activeShell,
+    createdAt: Date.now(),
+    senderId,
+    ptyProcess
+  };
+  terminalSessions.set(ptyId, session);
+
+  ptyProcess.onData((data) => {
+    sendTerminalSessionEvent(session, "terminal:pty-data", {
+      ptyId,
+      paneId: session.paneId,
+      data
+    });
+  });
+
+  ptyProcess.onExit(({ exitCode, signal }) => {
+    sendTerminalSessionEvent(session, "terminal:pty-exit", {
+      ptyId,
+      paneId: session.paneId,
+      exitCode,
+      signal
+    });
+    terminalSessions.delete(ptyId);
+  });
+
+  return session;
 }
 
 app.on("browser-window-created", (_event, window) => {
@@ -1122,6 +1355,52 @@ ipcMain.handle("fs:copy-path", async (_event, filePath) => copyFullPath(filePath
 ipcMain.handle("codex:launch", async (_event, payload) =>
   launchCodex(payload.directoryPath, payload.model, payload.promptTemplate)
 );
+ipcMain.handle("terminal:pty-start", async (event, payload = {}) => {
+  const session = ensureTerminalSession({
+    paneId: payload?.paneId,
+    cwd: payload?.cwd,
+    cols: payload?.cols,
+    rows: payload?.rows,
+    senderId: event.sender.id
+  });
+  return {
+    ok: true,
+    ptyId: session.ptyId,
+    paneId: session.paneId,
+    cwd: session.cwd
+  };
+});
+ipcMain.handle("terminal:pty-write", async (_event, { ptyId, data } = {}) => {
+  const session = terminalSessions.get(ptyId);
+  if (!session?.ptyProcess) {
+    return { ok: false };
+  }
+
+  session.ptyProcess.write(String(data ?? ""));
+  return { ok: true };
+});
+ipcMain.handle("terminal:pty-resize", async (_event, { ptyId, cols, rows } = {}) => {
+  const session = terminalSessions.get(ptyId);
+  if (!session?.ptyProcess) {
+    return { ok: false };
+  }
+
+  const nextCols = Math.max(1, Number(cols) || 1);
+  const nextRows = Math.max(1, Number(rows) || 1);
+  session.ptyProcess.resize(nextCols, nextRows);
+  return { ok: true };
+});
+ipcMain.handle("terminal:pty-kill", async (_event, { ptyId } = {}) => {
+  if (!ptyId) {
+    return { ok: false };
+  }
+
+  return { ok: killTerminalSessionById(ptyId) };
+});
+ipcMain.handle("terminal:pty-kill-all", async () => {
+  destroyAllTerminalSessions();
+  return { ok: true };
+});
 ipcMain.handle("terminal:run-command", async (_event, { command, cwd }) => {
   return new Promise((resolve) => {
     exec(
@@ -1154,8 +1433,13 @@ app.whenReady().then(() => {
   });
 });
 
+app.on("before-quit", () => {
+  destroyAllTerminalSessions();
+});
+
 app.on("window-all-closed", () => {
   clearFileWatcher();
+  destroyAllTerminalSessions();
   if (process.platform !== "darwin") {
     app.quit();
   }

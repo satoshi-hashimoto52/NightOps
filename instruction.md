@@ -1,202 +1,287 @@
 
-Terminal Dock の Clear が動作せず、active pane のログが消えない問題を修正してください。
-コマンド実行機能はほぼ正常なので、Clear 処理だけを最小差分で確認・修正してください。
-
----
-
-【問題】
-
-Terminal Dock の Clear を押してもログが消えない。
-または Clear 実行時にエラーが出ている可能性がある。
+Terminal Dock 第4-4段階として、PTYターミナルの操作性を上げるためのセッション制御を追加してください。
+複数PTY化は完了済みなので、今回は「Restart / Kill / Clear / 状態表示」を中心に最小差分で実装してください。
 
 ---
 
 【目的】
 
-- Clear で active pane の logs だけを空にする
-- 他 pane の logs は残す
-- command input / running / paneSizes / layout は維持する
-- localStorage 保存対象は変更しない
+各 Terminal pane を実用しやすくする。
+
+今回追加すること：
+
+- active pane の Clear
+- active pane の Restart
+- active pane の Kill
+- pane ごとの状態表示
+- PTY exit 時の表示
+- rootPath 変更時の挙動整理
 
 ---
 
-【確認対象】
+【実装すること】
 
-主に以下を確認してください。
+1. Terminal Dock ヘッダーに以下の操作を追加
 
-- src/components/TerminalDock.jsx
-- src/App.jsx
-
----
-
-# ① Clear ボタンの onClick を確認
-
-TerminalDock.jsx の Clear ボタンが、正しい関数を呼んでいるか確認してください。
-
-NG例：
-
-```jsx
-onClick={clearLogs}
-````
-
-ただし `clearLogs` が未定義、または古いダミー用関数ならNG。
-
-OK例：
-
-```jsx
-onClick={handleClearActivePaneLogs}
+```text
+TERMINAL   [Right/Bottom] [+] [Clear] [Restart] [Kill] [×]
 ```
 
-または props 経由なら：
+既存ヘッダー幅が狭い場合は、テキストを短くしてよいです。
 
-```jsx
-onClick={() => onClearPaneLogs(layout.activePaneId)}
+例：
+
+```text
+Clear
+Restart
+Kill
+```
+
+または
+
+```text
+CLR
+RST
+KILL
 ```
 
 ---
 
-# ② activePaneId が取れているか確認
+# 1. Clear
 
-Clear 処理内で activePaneId が undefined になっていないか確認してください。
+【仕様】
 
-必ず fallback を入れてください。
+* active pane の xterm 画面だけ clear する
+* PTY 自体は終了しない
+* 実行中プロセスも止めない
+* 他paneには影響しない
+
+実装例：
 
 ```js
-const activePaneId = current.activePaneId || current.panes[0]?.id;
+setClearRequest({
+  paneId: layout.activePaneId,
+  token: Date.now()
+});
+```
+
+TerminalPane 側：
+
+```js
+useEffect(() => {
+  if (!clearRequest) return;
+  if (clearRequest.paneId !== pane.id) return;
+
+  xtermRef.current?.clear();
+}, [clearRequest]);
 ```
 
 ---
 
-# ③ Clear 処理は App.jsx 側で state 更新する
+# 2. Restart
 
-App.jsx に以下のような関数を追加、または既存関数を修正してください。
+【仕様】
+
+* active pane の PTY だけ kill
+* 同じ pane の xterm を clear
+* 同じ rootPath で新しい PTY を起動
+* 他paneには影響しない
+
+挙動：
+
+```text
+Restart Log 2
+→ Log 2 の zsh だけ再起動
+→ Log 1 / Log 3 は維持
+```
+
+実装方針：
+
+* restartRequest state を TerminalDock に持つ
+* active pane に token を送る
+* TerminalPane 側で自分宛なら restartPty() を実行
+
+例：
 
 ```js
-function clearTerminalPaneLogs(paneId) {
-  setTerminalLayout((current) => {
-    const targetPaneId = paneId || current.activePaneId || current.panes[0]?.id;
-    if (!targetPaneId) return current;
+setRestartRequest({
+  paneId: layout.activePaneId,
+  token: Date.now()
+});
+```
 
-    return {
-      ...current,
-      panes: current.panes.map((pane) =>
-        pane.id === targetPaneId
-          ? {
-              ...pane,
-              logs: []
-            }
-          : pane
-      )
-    };
-  });
+TerminalPane 側：
+
+```js
+useEffect(() => {
+  if (!restartRequest) return;
+  if (restartRequest.paneId !== pane.id) return;
+
+  restartPty();
+}, [restartRequest]);
+```
+
+---
+
+# 3. Kill
+
+【仕様】
+
+* active pane の PTY だけ kill
+* xterm には `[terminal] session killed` を表示
+* pane自体は閉じない
+* 他paneには影響しない
+* Kill後は入力しても実行されない、または echo fallback でよい
+* Restart で復帰できる
+
+実装方針：
+
+```js
+setKillRequest({
+  paneId: layout.activePaneId,
+  token: Date.now()
+});
+```
+
+TerminalPane 側：
+
+```js
+useEffect(() => {
+  if (!killRequest) return;
+  if (killRequest.paneId !== pane.id) return;
+
+  killPtyOnly();
+}, [killRequest]);
+```
+
+---
+
+# 4. paneごとの状態表示
+
+TerminalPane header に状態を表示してください。
+
+状態候補：
+
+```text
+READY
+RUNNING
+EXITED
+KILLED
+FAILED
+```
+
+最小実装では以下でよいです。
+
+* PTY接続成功：READY
+* PTY起動失敗：FAILED
+* PTY終了：EXITED
+* Kill押下：KILLED
+
+表示例：
+
+```text
+Log 1    READY
+Log 2    KILLED
+Log 3    FAILED
+```
+
+CSS例：
+
+```css
+.terminal-pane-status {
+  margin-left: auto;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  opacity: 0.75;
+}
+
+.terminal-pane-status.ready {
+  color: #60a5fa;
+}
+
+.terminal-pane-status.exited,
+.terminal-pane-status.killed {
+  color: #facc15;
+}
+
+.terminal-pane-status.failed {
+  color: #f87171;
 }
 ```
 
 ---
 
-# ④ TerminalDock に props として渡す
+# 5. PTY exit 時の表示
 
-App.jsx で TerminalDock に渡してください。
+PTY が終了したら、その pane の xterm に終了メッセージを表示してください。
 
-```jsx
-<TerminalDock
-  layout={terminalLayout}
-  onChangeLayout={setTerminalLayout}
-  onRunCommand={runTerminalCommand}
-  onClearPaneLogs={clearTerminalPaneLogs}
-  rootPath={rootPath}
-/>
-```
-
-既存 props 名がある場合は、それに合わせてください。
-
----
-
-# ⑤ TerminalDock 側で呼び出す
-
-TerminalDock.jsx の Clear ボタンを以下のようにしてください。
-
-```jsx
-<button
-  type="button"
-  className="terminal-dock-button"
-  onClick={() => onClearPaneLogs?.(layout.activePaneId)}
->
-  Clear
-</button>
-```
-
-fallback が App.jsx 側にあるので、activePaneId が null でも安全にしてください。
-
----
-
-# ⑥ pane内の Clear がある場合
-
-各 pane に Clear ボタンがある場合は、対象 pane.id を渡してください。
-
-```jsx
-onClick={() => onClearPaneLogs?.(pane.id)}
-```
-
----
-
-# ⑦ Clear で消すのは logs のみ
-
-以下は消さないこと。
+例：
 
 ```text
-inputValue
-running
-paneSizes
-panes
-activePaneId
-dock
-size
-visible
+[terminal] session exited. code=0 signal=null
 ```
 
-NG：
+その後、状態を EXITED にする。
 
-```js
-pane = { logs: [] }
-```
+注意：
 
-OK：
-
-```js
-{ ...pane, logs: [] }
-```
+* exit 通知は対象 pane にだけ出す
+* 他paneには出さない
 
 ---
 
-# ⑧ Clear 後の空表示
+# 6. rootPath 変更時
 
-logs が空になったら、既存の `No logs` 表示が出ることを確認してください。
+既存仕様を維持してください。
 
-もし logs が undefined で落ちる場合は、表示側で fallback してください。
+推奨仕様：
 
-```js
-const logs = pane.logs || [];
+* rootPath 変更時は全paneのPTYを再起動
+* 新しい rootPath を cwd にする
+* xterm には以下を表示
+
+```text
+[terminal] workspace changed. restarting session...
 ```
 
----
-
-# ⑨ エラーログ確認
-
-Clear 押下時に DevTools に以下が出ていないか確認してください。
-
-* onClearPaneLogs is not a function
-* Cannot read properties of undefined
-* activePaneId undefined
-* logs.map is not a function
+ただし、既に実装済みなら大きく変えないこと。
 
 ---
 
-# ⑩ localStorage保存との関係
+# 7. Dock非表示時
 
-Clear で logs が変わっても、localStorage へ logs を保存しない仕様は維持してください。
+現在の仕様を維持してください。
 
-保存対象は引き続き以下のみ。
+* Cmd + J 非表示では PTY を終了しない
+* 再表示時に続きが見える
+* visible true で fit / resize を再実行
+
+---
+
+# 8. pane削除時
+
+現在の仕様を維持してください。
+
+* pane削除時だけ、対象paneのPTYを kill
+* 他paneのPTYは維持
+
+---
+
+# 9. localStorage
+
+保存しない：
+
+```text
+ptyId
+shell状態
+実行中プロセス
+xterm buffer
+command history
+logs
+pane status
+```
+
+保存するものは従来通り：
 
 ```text
 visible
@@ -208,32 +293,36 @@ paneSizes
 
 ---
 
-【禁止】
+# 10. 禁止
 
-* コマンド実行処理を変更しない
-* IPC を変更しない
-* logs を localStorage 保存しない
-* panes 全体を localStorage 保存しない
-* pane 削除処理を変更しない
-* Right / Bottom 切替を壊さない
-* リサイズ処理を壊さない
+* 複数PTY化を壊さない
+* Cmd + J 非表示でPTYをkillしない
+* pane削除時のkillを消さない
+* ptyIdをlocalStorage保存しない
+* xterm bufferを保存しない
+* TREE / Preview / Editor を触らない
+* node-ptyのspawn-helper権限補正を触らない
+* rebuild設定を触らない
+* Right / Bottom / リサイズ処理を壊さない
 
 ---
 
-【確認】
+# 11. 確認
 
 以下を確認してください。
 
-1. Log 1 で `pwd` を実行する
-2. Clear を押す
-3. Log 1 のログだけ消える
-4. `No logs` が表示される
-5. Log 2 / Log 3 のログは残る
-6. Log 2 を active にして Clear
-7. Log 2 のログだけ消える
-8. 入力欄の値や running 状態は壊れない
-9. Right / Bottom 切替後も Clear が動く
-10. npm run build が成功する
+1. Log 1 / Log 2 / Log 3 がそれぞれ独立して動く
+2. Clear で active pane の画面だけ消える
+3. Clear しても実行中プロセスは止まらない
+4. Restart で active pane のPTYだけ再起動する
+5. Restart しても他paneは維持される
+6. Kill で active pane のPTYだけ終了する
+7. Kill後、paneに KILLED 表示が出る
+8. Restart で KILLED pane が復帰する
+9. PTY exit 時に対象paneだけ終了メッセージが出る
+10. Cmd + J 非表示 / 再表示でPTYが維持される
+11. pane削除時は対象paneだけPTYが終了する
+12. npm run build が成功する
 
 ---
 
@@ -241,10 +330,11 @@ paneSizes
 
 以下のみ提示してください。
 
-* Clear が動かなかった原因
-* 修正した App.jsx の clear 関数
-* 修正した TerminalDock.jsx の Clear 呼び出し
-* logs 以外を維持していること
+* 追加した Clear / Restart / Kill 操作
+* paneごとの status 表示
+* PTY exit 時の表示処理
+* rootPath変更時の扱い
+* localStorageに保存しない項目
 * npm run build の結果
 
 ```

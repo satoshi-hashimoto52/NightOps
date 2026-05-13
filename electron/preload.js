@@ -36,7 +36,22 @@ const exposedApi = {
   revealFile: (filePath) => ipcRenderer.invoke("fs:reveal", filePath),
   copyFilePath: (filePath) => ipcRenderer.invoke("fs:copy-path", filePath),
   launchCodex: (payload) => ipcRenderer.invoke("codex:launch", payload),
-  runTerminalCommand: (payload) => ipcRenderer.invoke("terminal:run-command", payload)
+  runTerminalCommand: (payload) => ipcRenderer.invoke("terminal:run-command", payload),
+  startTerminalSession: (payload) => ipcRenderer.invoke("terminal:pty-start", payload),
+  writeTerminalSession: (payload) => ipcRenderer.invoke("terminal:pty-write", payload),
+  resizeTerminalSession: (payload) => ipcRenderer.invoke("terminal:pty-resize", payload),
+  killTerminalSession: (payload) => ipcRenderer.invoke("terminal:pty-kill", payload),
+  killAllTerminalSessions: () => ipcRenderer.invoke("terminal:pty-kill-all"),
+  onTerminalSessionData: (callback) => {
+    const handler = (_event, data) => callback(data);
+    ipcRenderer.on("terminal:pty-data", handler);
+    return () => ipcRenderer.removeListener("terminal:pty-data", handler);
+  },
+  onTerminalSessionExit: (callback) => {
+    const handler = (_event, data) => callback(data);
+    ipcRenderer.on("terminal:pty-exit", handler);
+    return () => ipcRenderer.removeListener("terminal:pty-exit", handler);
+  }
 };
 
 contextBridge.exposeInMainWorld("api", exposedApi);
