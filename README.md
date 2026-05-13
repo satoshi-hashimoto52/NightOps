@@ -49,13 +49,15 @@ The terminal remains the primary workspace. NightOps handles file navigation, li
 - Launch Codex and Settings use the same panel shell styling.
 - The Settings opacity inputs are percentages from `0` to `100`.
 
-## Setup
+## Quick Start
 
 ```bash
 cd /Users/hashimoto/vscode/_app/NightOps
 npm install
 npm run dev
 ```
+
+## Build
 
 For a production build:
 

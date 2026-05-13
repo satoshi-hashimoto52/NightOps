@@ -428,6 +428,7 @@ export default function FileTree({ rootPath, onSelectFile, selectedFilePath, rel
   function openContextMenu(node, event) {
     event.preventDefault();
     event.stopPropagation();
+    void bringWindowToFront();
 
     if (!isPathSelected(node.path)) {
       selectPath(node.path, { preserveActive: true });

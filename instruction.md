@@ -1,66 +1,66 @@
-Markdown Preview / Editor 内のコードブロックを「Terminal Glass風」のスタイリッシュな見た目に変更してください。
-CSS中心の最小差分で対応し、既存のMarkdown描画・Cmd+F / Cmd+D・Save / dirty・タブ状態管理には触らないこと。
+・UIのLaunchボタンを機能はそのままにターミナルアイコンへ置き換える。アイコンデザインは右の歯車と同じ系統にする。
+・TREE内のファイル・フォルダ作成UIが最背面に表示されてしまう問題を修正してください。
+CSS / コンポーネント構造の最小差分で対応し、既存のTREE操作・D&D・選択・リネーム機能は壊さないこと。
+
+---
+
+【問題】
+
+TREE内で新規ファイル / 新規フォルダを作成するUIが、他のUI要素の背面に回ってしまい、入力欄やメニューが見えにくい、または操作しづらい状態になっている。
+
+想定される原因：
+
+- z-index が低い
+- 親要素に overflow: hidden がある
+- TREEの仮想スクロール領域内に作成UIが描画されている
+- panel / pane / preview 側の z-index が高い
+- context menu / inline input が通常行と同じレイヤーにある
+- position 指定が不足している
 
 ---
 
 【目的】
 
-- コードブロックを黒ベタではなく、透過UIに合うガラス風デザインにする
-- NightOps全体の透明感と統一する
-- コードの可読性を上げる
-- Markdown内のコードブロックを見つけやすくする
+- 新規ファイル / 新規フォルダ作成UIを常に前面に表示する
+- 入力欄がTREE内で見やすく操作しやすい状態にする
+- TREEのスクロールや仮想スクロールに邪魔されないようにする
+- 既存のリネーム入力欄とも見た目・挙動を統一する
 
 ---
 
 【対象】
 
-主に以下のCSSを確認・修正してください。
+主に以下を確認してください。
 
-- .markdown-body pre
-- .markdown-body code
-- .markdown-preview pre
-- .markdown-preview code
-- .code-preview
-- pre
-- code
+- src/components/FileTree.jsx
+- src/styles.css
 
-実際にMarkdown Previewで使われているselectorを優先してください。
+関連クラス候補：
 
----
+- .tree-root
+- .tree-virtual-viewport
+- .tree-virtual-slice
+- .tree-row
+- .tree-context-menu
+- .tree-rename-input
+- .tree-create-input
+- .tree-inline-editor
+- .left-panel
 
-【デザイン方針】
-
-Terminal Glass風にしてください。
-
-イメージ：
-
-┌──────────────────────────────┐
-│ code                         │
-│──────────────────────────────│
-│ const value = 1;              │
-│ console.log(value);           │
-└──────────────────────────────┘
+実際のクラス名に合わせて修正すること。
 
 ---
 
-【コードブロック本体】
+【① 作成UIの描画レイヤーを上げる】
 
-pre は以下の方向で調整してください。
+新規作成UI、リネームUI、コンテキストメニューはTREE通常行より前面に出してください。
+
+例：
 
 ```css
-.markdown-body pre,
-.markdown-preview pre {
+.tree-create-input,
+.tree-rename-input,
+.tree-inline-editor {
   position: relative;
-  margin: 12px 0;
-  padding: 30px 14px 14px;
-  overflow-x: auto;
-  border-radius: 8px;
-  border: 1px solid rgba(255, 255, 255, 0.10);
-  background:
-    linear-gradient(
-      180deg,
-      rgba(var(--bg-surface-base), calc(var(--surface-alpha) * 0.38)) 0%,
-      rgba(var(--bg-panel-base), calc(var(--surface-alpha) * 0.24)) 100%
-    );
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  z-index: 30;
 }
