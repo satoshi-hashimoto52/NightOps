@@ -165,7 +165,7 @@ export default function TopBar({
         </div>
         <div className="topbar-inline-graph">
           <ResponsiveContainer width="100%" height="100%">
-            <LineChart data={history}>
+            <LineChart data={history} margin={{ top: 0, right: 0, bottom: 0, left: 0 }}>
               <YAxis hide domain={[0, 100]} />
               <CartesianGrid
                 vertical={false}

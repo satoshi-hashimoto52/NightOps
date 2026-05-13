@@ -737,8 +737,17 @@ export default function App() {
             Browse
           </button>
         </div>
-        <button className="window-launch-button" onClick={() => setLaunchOpen(true)}>
-          Launch
+        <button
+          className="window-launch-button"
+          aria-label="Launch"
+          title="Launch"
+          onClick={() => setLaunchOpen(true)}
+        >
+          <svg className="window-launch-button-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+            <path d="M5 6.5h14v11H5z" />
+            <path d="M8 10l3 2.5-3 2.5" />
+            <path d="M13 15h3" />
+          </svg>
         </button>
         <button className="window-settings-button" onClick={() => setSettingsOpen(true)}>
           ⚙

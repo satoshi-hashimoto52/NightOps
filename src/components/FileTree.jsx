@@ -1,3 +1,4 @@
+import { createPortal } from "react-dom";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   copyFilePath,
@@ -322,6 +323,8 @@ async function bringWindowToFront() {
 }
 
 export default function FileTree({ rootPath, onSelectFile, selectedFilePath, reloadToken = 0, sortMode = "name", onDropFiles, onNotify }) {
+  const TREE_CONTEXT_MENU_WIDTH = 220;
+  const TREE_CONTEXT_MENU_HEIGHT = 320;
   const [tree, setTree] = useState(null);
   const [expandedPaths, setExpandedPaths] = useState(() => loadExpandedPaths(rootPath));
   const [warningMap, setWarningMap] = useState({});
@@ -430,13 +433,16 @@ export default function FileTree({ rootPath, onSelectFile, selectedFilePath, rel
     event.stopPropagation();
     void bringWindowToFront();
 
+    const x = Math.min(event.clientX, window.innerWidth - TREE_CONTEXT_MENU_WIDTH - 8);
+    const y = Math.min(event.clientY, window.innerHeight - TREE_CONTEXT_MENU_HEIGHT - 8);
+
     if (!isPathSelected(node.path)) {
       selectPath(node.path, { preserveActive: true });
     }
     setActivePath(node.path);
     setContextMenu({
-      x: event.clientX,
-      y: event.clientY,
+      x: Math.max(8, x),
+      y: Math.max(8, y),
       node
     });
   }
@@ -889,27 +895,36 @@ export default function FileTree({ rootPath, onSelectFile, selectedFilePath, rel
   }
 
   useEffect(() => {
-    function handleWindowClick() {
-      closeContextMenu();
-    }
-
     function handleKeyDown(event) {
       if (event.key === "Escape") {
         closeContextMenu();
       }
     }
 
-    window.addEventListener("click", handleWindowClick);
     window.addEventListener("keydown", handleKeyDown);
     window.addEventListener("dragend", clearDragState);
     window.addEventListener("drop", clearDragState);
     return () => {
-      window.removeEventListener("click", handleWindowClick);
       window.removeEventListener("keydown", handleKeyDown);
       window.removeEventListener("dragend", clearDragState);
       window.removeEventListener("drop", clearDragState);
     };
   }, []);
+
+  useEffect(() => {
+    if (!contextMenu) {
+      return undefined;
+    }
+
+    function handleWindowPointerDown() {
+      closeContextMenu();
+    }
+
+    window.addEventListener("pointerdown", handleWindowPointerDown);
+    return () => {
+      window.removeEventListener("pointerdown", handleWindowPointerDown);
+    };
+  }, [contextMenu]);
 
   async function handleRename(node) {
     closeContextMenu();
@@ -1647,11 +1662,13 @@ export default function FileTree({ rootPath, onSelectFile, selectedFilePath, rel
       >
         <div className="tree-virtual-list">{visibleNodes.map((row) => renderRow(row))}</div>
       </div>
-      {contextMenu ? (
+      {contextMenu && typeof document !== "undefined" ? createPortal(
         <div
           className="tree-context-menu"
-          style={{ left: `${contextMenu.x}px`, top: `${contextMenu.y}px` }}
+          style={{ left: contextMenu.x, top: contextMenu.y }}
+          onPointerDown={(event) => event.stopPropagation()}
           onClick={(event) => event.stopPropagation()}
+          onContextMenu={(event) => event.preventDefault()}
         >
           <button type="button" className="tree-context-menu-item" onClick={() => {
             closeContextMenu();
@@ -1690,7 +1707,8 @@ export default function FileTree({ rootPath, onSelectFile, selectedFilePath, rel
           <button type="button" className="tree-context-menu-item" onClick={() => handleCopyPath(contextMenu.node)}>
             フルパスをコピー
           </button>
-        </div>
+        </div>,
+        document.body
       ) : null}
       {renameDialog ? (
         <div

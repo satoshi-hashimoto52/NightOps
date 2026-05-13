@@ -2,9 +2,15 @@
   --bg-main: #1e2227;
   --bg-panel: #252a30;
   --bg-elevated: #2b3138;
+  --bg-panel-upper: #2f353d;
+  --bg-surface-upper-hover: rgba(255, 255, 255, 0.06);
+  --bg-surface-base: 24, 28, 35;
+  --bg-panel-base: 18, 22, 28;
   --border: #343a42;
+  --border-upper: rgba(255, 255, 255, 0.12);
   --text-main: #e6e9ee;
   --text-sub: #aab0b7;
+  --text-upper: #f0f3f7;
   --accent-yellow: #f5c542;
   --green: #4fd1a5;
   --orange: #f6ad55;
@@ -237,20 +243,37 @@ textarea {
 
 .window-launch-button {
   margin-left: auto;
-  height: 22px;
-  padding: 0 12px;
-  border: 1px solid rgba(47, 209, 122, 0.72);
-  border-radius: 7px;
-  background: rgba(16, 34, 24, 0.72);
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
   color: #d8ffe7;
   position: relative;
   z-index: 1;
-  font-size: 11px;
-  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   transition:
     transform 0.15s ease,
-    border-color 0.15s ease,
-    background 0.15s ease;
+    color 0.15s ease,
+    opacity 0.15s ease;
+}
+
+.window-launch-button-icon {
+  width: 22px;
+  height: 22px;
+  display: block;
+  flex: 0 0 auto;
+}
+
+.window-launch-button-icon path {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
 .window-settings-button {
@@ -299,9 +322,8 @@ textarea {
 }
 
 .window-launch-button:hover {
-  border-color: rgba(47, 209, 122, 0.95);
-  background: rgba(20, 46, 30, 0.84);
   color: #f4fff8;
+  opacity: 0.92;
 }
 
 .window-drag-bar:hover .window-path {
@@ -387,7 +409,9 @@ textarea {
   min-width: 150px;
   flex: 1;
   height: 34px;
+  min-height: 0;
   align-self: center;
+  overflow: hidden;
 }
 
 .topbar-group-end {
@@ -1024,30 +1048,38 @@ textarea {
 
 .tree-context-menu {
   position: fixed;
-  z-index: 100;
-  min-width: 120px;
+  z-index: 5000;
+  min-width: 180px;
+  max-width: 260px;
   padding: 6px;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  background: rgba(20, 24, 30, 0.98);
-  box-shadow: var(--shadow);
+  border: 1px solid var(--border-upper);
+  border-radius: 8px;
+  background: var(--bg-panel-upper);
+  color: var(--text-upper);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.28);
   display: grid;
   gap: 4px;
+  overflow: visible;
 }
 
-.tree-context-menu-item {
+.tree-context-menu button,
+.tree-context-menu .tree-context-menu-item {
   width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
   border: 0;
   background: transparent;
-  color: var(--text-main);
-  border-radius: 4px;
-  padding: 6px 8px;
+  color: var(--text-upper);
+  border-radius: 5px;
+  padding: 7px 10px;
   text-align: left;
   font-size: 12px;
 }
 
-.tree-context-menu-item:hover {
-  background: rgba(255, 255, 255, 0.06);
+.tree-context-menu button:hover,
+.tree-context-menu .tree-context-menu-item:hover {
+  background: var(--bg-surface-upper-hover);
 }
 
 .tree-context-menu-item.danger {
@@ -1056,14 +1088,16 @@ textarea {
 
 .tree-rename-dialog {
   width: 240px;
+  z-index: 30;
 }
 
 .tree-create-dialog {
   width: 260px;
+  z-index: 30;
 }
 
 .tree-create-backdrop {
-  z-index: 101;
+  z-index: 29;
 }
 
 .tree-rename-input {
@@ -2104,16 +2138,23 @@ textarea {
 
 .markdown-preview :not(pre) > code,
 .markdown-inline-code {
-  padding: 0.15em 0.35em;
+  padding: 1px 5px;
   border-radius: 4px;
-  background: rgba(255, 255, 255, 0.08);
-  color: #f2f5f9;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(var(--bg-surface-base), calc(var(--surface-alpha) * 0.3));
+  color: var(--text-main);
+  font-family:
+    ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    Monaco,
+    Consolas,
+    monospace;
+  font-size: 0.92em;
 }
 
 .markdown-inline-code {
-  background: rgba(124, 255, 0, 0.12) !important;
-  color: #7cff00 !important;
-  border: 1px solid rgba(124, 255, 0, 0.2);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
 }
 
 .markdown-inline-link {
@@ -2183,11 +2224,13 @@ textarea {
 }
 
 .markdown-preview pre,
-.code-preview pre {
+pre.code-preview,
+.markdown-code-shell pre {
   position: relative;
   margin: 12px 0;
   padding: 30px 14px 14px;
   overflow-x: auto;
+  max-width: 100%;
   border-radius: 8px;
   border: 1px solid rgba(255, 255, 255, 0.1);
   background:
@@ -2201,18 +2244,39 @@ textarea {
   backdrop-filter: blur(calc(var(--surface-blur, 0) * 0.45px)) saturate(1.1);
 }
 
+.markdown-preview pre::before,
+pre.code-preview::before,
+.markdown-code-shell pre::before {
+  content: "code";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  padding: 0 10px;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.48);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.035);
+  pointer-events: none;
+}
+
 .markdown-code-shell .markdown-code-block {
   margin: 0;
   padding-top: 34px;
 }
 
 .markdown-preview pre code,
-.code-preview pre code,
+pre.code-preview code,
 .markdown-code-shell .markdown-code-block code {
   display: block;
   padding: 0;
   background: transparent;
-  color: inherit;
+  color: var(--text-main);
   font-family:
     ui-monospace,
     SFMono-Regular,
@@ -2220,7 +2284,9 @@ textarea {
     Monaco,
     Consolas,
     monospace;
+  font-size: 12.5px;
   line-height: 1.55;
+  white-space: pre;
 }
 
 .markdown-mermaid-shell {
