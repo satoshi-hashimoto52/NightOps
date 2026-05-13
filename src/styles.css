@@ -2226,7 +2226,7 @@ textarea {
     Monaco,
     Consolas,
     monospace;
-  font-size: 0.92em;
+  font-size: clamp(0.85em, calc(0.92em * var(--preview-font-scale)), 1.15em);
 }
 
 .markdown-inline-code {
@@ -2320,6 +2320,11 @@ pre.code-preview,
   backdrop-filter: blur(calc(var(--surface-blur, 0) * 0.45px)) saturate(1.1);
 }
 
+pre.code-preview {
+  font-size: clamp(11px, calc(12.5px * var(--preview-font-scale)), 18px);
+  line-height: 1.55;
+}
+
 .markdown-preview pre::before,
 pre.code-preview::before,
 .markdown-code-shell pre::before {
@@ -2332,7 +2337,7 @@ pre.code-preview::before,
   display: flex;
   align-items: center;
   padding: 0 10px;
-  font-size: 10px;
+  font-size: clamp(9px, calc(10px * var(--preview-font-scale)), 12px);
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: rgba(255, 255, 255, 0.48);
@@ -2360,7 +2365,7 @@ pre.code-preview code,
     Monaco,
     Consolas,
     monospace;
-  font-size: 12.5px;
+  font-size: clamp(11px, calc(12.5px * var(--preview-font-scale)), 18px);
   line-height: 1.55;
   white-space: pre;
 }
