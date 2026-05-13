@@ -1,259 +1,255 @@
 
-TREE の右クリックメニューがまだ TREE コンテナ内に埋まって表示されています。
-z-index 調整だけでは解決できていないため、必ず Portal 化して document.body 直下に描画してください。
+Preview / Editor の本文表示で、スクロール操作による拡大・縮小がコードブロックにも反映されるように修正してください。
+既存のズーム操作・Markdown表示・Cmd+F / Cmd+D・Save / dirty には触らず、CSS中心の最小差分で対応してください。
 
 ---
 
-【現状の問題】
+【問題】
 
-添付画像を見る限り、右クリックメニューが TREE コンテナの表示領域内に閉じ込められています。
+現在、Preview / Editor の通常テキストはスクロール操作で拡大・縮小されますが、Markdown内のコードブロックには同じ拡大率が反映されていません。
 
-現在の問題は z-index だけではありません。
-
-原因候補：
-
-- .left-panel / .tree-root / .tree-virtual-viewport の overflow によりクリップされている
-- TREE コンテナ内にメニューDOMを置いているため、パネル幅の制約を受けている
-- position: fixed にしても、親の stacking context / transform / contain の影響を受けている
-- z-index: 3000 でも、同じ親コンテキスト内でしか効いていない
-
-したがって、CSSだけで直そうとしないこと。
+そのため、本文だけ拡大され、コードブロック内の文字サイズが小さいままになり、視認性が悪くなっています。
 
 ---
 
-【必須修正】
+【目的】
 
-tree-context-menu を React Portal で document.body 直下に出してください。
+- Preview / Editor の本文ズーム倍率をコードブロックにも反映する
+- 通常本文とコードブロックの表示サイズ差を減らす
+- 最小サイズでは多少制限してよい
+- コードブロックの可読性を維持する
+- Terminal Glass風デザインは維持する
 
 ---
 
 【対象】
 
-- src/components/FileTree.jsx
-- src/styles.css
+主に以下のCSSを確認してください。
+
+- .markdown-preview
+- .markdown-body
+- .markdown-main
+- .markdown-preview pre
+- .markdown-preview pre code
+- .markdown-body pre
+- .markdown-body pre code
+- .code-preview
+- .markdown-code-shell
+- .markdown-inline-code
+- :not(pre) > code
 
 ---
 
-【① createPortal を import】
+【確認する既存変数】
 
-FileTree.jsx の先頭に追加：
+現在、本文ズームに使っている変数を確認してください。
 
-```js
-import { createPortal } from "react-dom";
+候補：
+
+```css
+--preview-font-scale
+--editor-font-scale
+--markdown-font-scale
 ````
 
-既に import がある場合は重複させないこと。
+既存で本文に使っているものを流用してください。
 
----
-
-【② contextMenu の座標は viewport 基準を維持】
-
-右クリック時は必ず clientX / clientY を使うこと。
-
-```js
-function openContextMenu(event, targetPath) {
-  event.preventDefault();
-  event.stopPropagation();
-
-  const menuWidth = 220;
-  const menuHeight = 320;
-
-  const x = Math.min(event.clientX, window.innerWidth - menuWidth - 8);
-  const y = Math.min(event.clientY, window.innerHeight - menuHeight - 8);
-
-  setContextMenu({
-    x,
-    y,
-    targetPath
-  });
-}
-```
-
-pageX / offsetX / TREE内相対座標は使わないこと。
-
----
-
-【③ メニュー描画を Portal 化】
-
-現在、TREEコンポーネント内で直接描画している tree-context-menu を、以下のように変更してください。
-
-```jsx
-{contextMenu
-  ? createPortal(
-      <div
-        className="tree-context-menu"
-        style={{
-          left: contextMenu.x,
-          top: contextMenu.y
-        }}
-        onClick={(event) => event.stopPropagation()}
-        onContextMenu={(event) => event.preventDefault()}
-      >
-        {/* 既存メニュー項目をここに移す */}
-      </div>,
-      document.body
-    )
-  : null}
-```
-
-重要：
-
-* メニュー項目の中身は既存のまま移植
-* New File / New Folder / Rename / Delete / Copy / Cut / Paste などの処理は変えない
-* 表示場所だけ document.body 直下に変更する
-
----
-
-【④ 外側クリックで閉じる処理】
-
-Portal 化すると TREE 外クリックでも閉じる必要があります。
-
-useEffect で以下を追加または既存処理を確認してください。
-
-```js
-useEffect(() => {
-  if (!contextMenu) return;
-
-  function handlePointerDown() {
-    setContextMenu(null);
-  }
-
-  function handleKeyDown(event) {
-    if (event.key === "Escape") {
-      setContextMenu(null);
-    }
-  }
-
-  window.addEventListener("pointerdown", handlePointerDown);
-  window.addEventListener("keydown", handleKeyDown);
-
-  return () => {
-    window.removeEventListener("pointerdown", handlePointerDown);
-    window.removeEventListener("keydown", handleKeyDown);
-  };
-}, [contextMenu]);
-```
-
-ただし、メニュー自身のクリックでは閉じすぎないように、メニュー側で stopPropagation すること。
-
----
-
-【⑤ CSS 修正】
-
-.tree-context-menu は body 直下に出る前提で、fixed / 高z-index にしてください。
+例：
 
 ```css
-.tree-context-menu {
-  position: fixed;
-  z-index: 5000;
-  min-width: 180px;
-  max-width: 260px;
-  padding: 6px;
-  border-radius: 8px;
-  background: var(--bg-panel-upper);
-  color: var(--text-upper);
-  border: 1px solid var(--border-upper);
-  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.28);
-  overflow: visible;
-}
+font-size: calc(13px * var(--preview-font-scale));
 ```
 
 ---
 
-【⑥ メニュー項目】
+【修正方針】
+
+コードブロックの font-size を固定値にせず、本文と同じズーム変数を使ってください。
+
+NG：
 
 ```css
-.tree-context-menu button,
-.tree-context-menu .tree-context-menu-item {
-  width: 100%;
-  display: flex;
-  align-items: center;
-  justify-content: flex-start;
-  padding: 7px 10px;
-  border: none;
-  border-radius: 5px;
-  background: transparent;
-  color: var(--text-upper);
-  font-size: 12px;
-  text-align: left;
-  cursor: pointer;
-}
-
-.tree-context-menu button:hover,
-.tree-context-menu .tree-context-menu-item:hover {
-  background: var(--bg-surface-upper-hover);
+.markdown-preview pre code {
+  font-size: 12.5px;
 }
 ```
 
-Delete など危険操作の色指定は既存を維持してよい。
-
----
-
-【⑦ left-panel 側の overflow は変更しない】
-
-以下は変更しないこと。
+OK：
 
 ```css
-.left-panel
-.tree-root
-.tree-virtual-viewport
-.tree-virtual-slice
-```
-
-理由：
-
-* TREEの仮想スクロールを壊す可能性がある
-* overflow を visible にするのではなく、メニューを Portal 化して解決する
-
----
-
-【⑧ z-index 基準】
-
-以下を目安にしてください。
-
-```text
-TREE通常行: 1
-TREE作成 / リネーム入力: 30
-タブメニュー / 検索バー: 2500
-TREE右クリックメニュー: 5000
-Settings / modal: 6000
-BootScreen: 9999
+.markdown-preview pre code {
+  font-size: clamp(
+    11px,
+    calc(12.5px * var(--preview-font-scale)),
+    18px
+  );
+}
 ```
 
 ---
 
-【⑨ 注意】
+【コードブロック本体】
 
-今回の修正で触るのは、右クリックメニューの描画場所とCSSだけです。
+pre 内の code にズーム倍率を適用してください。
 
-触らないこと：
+```css
+.markdown-preview pre code,
+.markdown-body pre code,
+.markdown-code-shell pre code,
+.code-preview code {
+  font-size: clamp(
+    11px,
+    calc(12.5px * var(--preview-font-scale)),
+    18px
+  );
+  line-height: 1.55;
+}
+```
 
-* TREEのD&D
-* TREEの仮想スクロール
-* ファイル作成処理
-* リネーム処理
-* 削除処理
-* 選択処理
-* Preview / Editor
-* Settings
+既存のズーム変数名が `--preview-font-scale` でない場合は、実際に本文へ使われている変数へ合わせてください。
+
+---
+
+【code-preview全体】
+
+ファイル全体をコード表示している場合も同じ倍率を反映してください。
+
+```css
+.code-preview {
+  font-size: clamp(
+    11px,
+    calc(12.5px * var(--preview-font-scale)),
+    18px
+  );
+  line-height: 1.55;
+}
+```
+
+---
+
+【インラインコード】
+
+インラインコードも本文に合わせて拡大・縮小してください。
+
+```css
+.markdown-preview :not(pre) > code,
+.markdown-body :not(pre) > code,
+.markdown-inline-code {
+  font-size: clamp(
+    0.85em,
+    calc(0.92em * var(--preview-font-scale)),
+    1.15em
+  );
+}
+```
+
+ただし、本文とのバランスが崩れる場合は `font-size: 0.92em;` のままでもよいです。
+
+優先はコードブロックです。
+
+---
+
+【ヘッダー帯の文字】
+
+Terminal Glass風コードブロックの `pre::before` にある `code` ラベルは、本文ズームに完全追従しなくてもよいです。
+
+ただし極端に小さく見える場合は以下のように調整してください。
+
+```css
+.markdown-preview pre::before,
+.markdown-body pre::before {
+  font-size: clamp(
+    9px,
+    calc(10px * var(--preview-font-scale)),
+    12px
+  );
+}
+```
+
+---
+
+【行間】
+
+ズーム時に詰まりすぎないよう、コードブロックは line-height を維持してください。
+
+推奨：
+
+```css
+line-height: 1.55;
+```
+
+または：
+
+```css
+line-height: calc(1.45 + (var(--preview-font-scale) * 0.05));
+```
+
+ただし、複雑にしすぎないこと。
+
+---
+
+【最小サイズ制限】
+
+コードは小さすぎると読みにくいため、clampで最小サイズを持たせてください。
+
+推奨：
+
+* 最小：11px
+* 基準：12.5px × preview scale
+* 最大：18px
+
+---
+
+【最大サイズ制限】
+
+拡大時にコードブロックだけ巨大になりすぎないようにしてください。
+
+推奨：
+
+* 最大：18px〜20px
+
+---
+
+【横スクロール】
+
+ズーム後も長いコードが崩れないよう、横スクロールは維持してください。
+
+```css
+.markdown-preview pre,
+.markdown-body pre,
+.code-preview {
+  overflow-x: auto;
+  max-width: 100%;
+}
+```
+
+---
+
+【禁止】
+
+* JSX変更
+* Markdownパーサ変更
+* Cmd+F / Cmd+D 変更
+* Save / dirty 変更
+* ズーム操作自体のロジック変更
+* コードブロックのTerminal Glass風デザイン削除
+* コードを折り返し固定に変更すること
+* 親要素の opacity を変更すること
 
 ---
 
 【確認】
 
-以下を実際に確認してください。
+以下を確認してください。
 
-1. TREEで右クリックする
-2. メニューがTREEコンテナ幅に閉じ込められない
-3. メニューがPreview / Editor側に重なって表示できる
-4. メニュー右端が切れない
-5. New File / New Folder がクリックできる
-6. Rename / Delete / Copy / Cut / Paste が動く
-7. Finderで表示 / フルパスコピーが動く
-8. Escapeで閉じる
-9. 外側クリックで閉じる
-10. TREEスクロール・仮想スクロールが壊れていない
-11. npm run build が成功する
+1. Preview / Editor で通常テキストを拡大する
+2. Markdown内のコードブロック文字も拡大される
+3. 通常テキストを縮小するとコードブロックも縮小される
+4. コードブロックは小さくなりすぎない
+5. Terminal Glass風の見た目は維持される
+6. 横スクロールが維持される
+7. インラインコードも極端に浮かない
+8. npm run build が成功する
 
 ---
 
@@ -261,10 +257,10 @@ BootScreen: 9999
 
 以下のみ提示してください。
 
-* Portal化した FileTree.jsx の箇所
-* contextMenu 座標処理の修正箇所
-* 修正した .tree-context-menu CSS
-* overflow を変更していないこと
+* 既存本文ズームに使われていたCSS変数名
+* コードブロックへズーム反映したCSSクラス
+* clampで設定した最小 / 基準 / 最大サイズ
+* Terminal Glass風デザインを維持したこと
 * npm run build の結果
 
 ```

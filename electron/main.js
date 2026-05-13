@@ -480,12 +480,32 @@ function validateEntryName(nextName) {
   return safeName;
 }
 
+function toFriendlyEntryNameError(error) {
+  if (error?.code === "EEXIST") {
+    return new Error("A file or folder with this name already exists.");
+  }
+  return error;
+}
+
 async function renameFilePath(filePath, nextName) {
   const parentPath = path.dirname(filePath);
   const safeName = validateEntryName(nextName);
 
   const nextPath = path.join(parentPath, safeName);
-  await fs.rename(filePath, nextPath);
+  try {
+    await fs.access(nextPath);
+    throw new Error("A file or folder with this name already exists.");
+  } catch (error) {
+    if (error?.code !== "ENOENT") {
+      throw toFriendlyEntryNameError(error);
+    }
+  }
+
+  try {
+    await fs.rename(filePath, nextPath);
+  } catch (error) {
+    throw toFriendlyEntryNameError(error);
+  }
   return {
     path: nextPath,
     name: safeName,
@@ -501,7 +521,11 @@ async function deleteFilePath(filePath) {
 async function createFilePath(directoryPath, nextName) {
   const safeName = validateEntryName(nextName);
   const nextPath = path.join(directoryPath, safeName);
-  await fs.writeFile(nextPath, "", { flag: "wx" });
+  try {
+    await fs.writeFile(nextPath, "", { flag: "wx" });
+  } catch (error) {
+    throw toFriendlyEntryNameError(error);
+  }
   return getEntryInfo(nextPath);
 }
 
@@ -536,7 +560,11 @@ async function createFileFromBuffer(directoryPath, nextName, content) {
 async function createDirectoryPath(directoryPath, nextName) {
   const safeName = validateEntryName(nextName);
   const nextPath = path.join(directoryPath, safeName);
-  await fs.mkdir(nextPath);
+  try {
+    await fs.mkdir(nextPath);
+  } catch (error) {
+    throw toFriendlyEntryNameError(error);
+  }
   return getEntryInfo(nextPath);
 }
 

@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
-import { CartesianGrid, Line, LineChart, ResponsiveContainer, YAxis } from "recharts";
+import { useEffect, useRef, useState } from "react";
+import { CartesianGrid, Line, LineChart, YAxis } from "recharts";
 import { getCodexStats } from "../utils/codexLog";
 import { getSystemUsage } from "../utils/system";
 import { calculateUsage, formatResetDateTime } from "../utils/codexLimits";
@@ -77,6 +77,8 @@ export default function TopBar({
     memoryPercent: 0
   });
   const [history, setHistory] = useState([]);
+  const [chartSize, setChartSize] = useState({ width: 0, height: 0 });
+  const chartRef = useRef(null);
   const [codex, setCodex] = useState({
     requestCount: 0,
     sessionCount: 0,
@@ -143,6 +145,37 @@ export default function TopBar({
     };
   }, []);
 
+  useEffect(() => {
+    const element = chartRef.current;
+    if (!element) {
+      return undefined;
+    }
+
+    const updateSize = () => {
+      const { width, height } = element.getBoundingClientRect();
+      setChartSize({
+        width: Math.max(0, Math.floor(width)),
+        height: Math.max(0, Math.floor(height))
+      });
+    };
+
+    updateSize();
+
+    if (typeof ResizeObserver === "undefined") {
+      window.addEventListener("resize", updateSize);
+      return () => {
+        window.removeEventListener("resize", updateSize);
+      };
+    }
+
+    const observer = new ResizeObserver(updateSize);
+    observer.observe(element);
+
+    return () => {
+      observer.disconnect();
+    };
+  }, []);
+
   return (
     <header className="topbar">
       <div className="topbar-group topbar-group-monitor">
@@ -163,9 +196,9 @@ export default function TopBar({
             tone={system.memoryPercent > 80 ? "danger" : "default"}
           />
         </div>
-        <div className="topbar-inline-graph">
-          <ResponsiveContainer width="100%" height="100%">
-            <LineChart data={history} margin={{ top: 0, right: 0, bottom: 0, left: 0 }}>
+        <div className="topbar-inline-graph" ref={chartRef}>
+          {chartSize.width > 0 && chartSize.height > 0 ? (
+            <LineChart width={chartSize.width} height={chartSize.height} data={history} margin={{ top: 0, right: 0, bottom: 0, left: 0 }}>
               <YAxis hide domain={[0, 100]} />
               <CartesianGrid
                 vertical={false}
@@ -191,7 +224,7 @@ export default function TopBar({
                 isAnimationActive={false}
               />
             </LineChart>
-          </ResponsiveContainer>
+          ) : null}
         </div>
       </div>
       <div className="topbar-group topbar-group-codex">

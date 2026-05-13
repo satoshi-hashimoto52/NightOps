@@ -314,6 +314,31 @@ function getSelectionDirectoryPath(node) {
   return node.type === "directory" ? node.path : node.parentPath || "";
 }
 
+function getUniqueName(existingNames, baseName, extension = "") {
+  const nameSet = new Set((existingNames || []).map((name) => String(name || "").toLowerCase()));
+  const firstName = `${baseName}${extension}`;
+  if (!nameSet.has(firstName.toLowerCase())) {
+    return firstName;
+  }
+
+  let index = 2;
+  while (true) {
+    const nextName = `${baseName} ${index}${extension}`;
+    if (!nameSet.has(nextName.toLowerCase())) {
+      return nextName;
+    }
+    index += 1;
+  }
+}
+
+function getEntryNamesFromNode(node) {
+  if (!node || node.type !== "directory" || !Array.isArray(node.children)) {
+    return null;
+  }
+
+  return node.children.map((child) => child.name).filter(Boolean);
+}
+
 async function bringWindowToFront() {
   try {
     await focusWindow();
@@ -325,6 +350,9 @@ async function bringWindowToFront() {
 export default function FileTree({ rootPath, onSelectFile, selectedFilePath, reloadToken = 0, sortMode = "name", onDropFiles, onNotify }) {
   const TREE_CONTEXT_MENU_WIDTH = 220;
   const TREE_CONTEXT_MENU_HEIGHT = 320;
+  const INLINE_EDITOR_MIN_WIDTH = 260;
+  const INLINE_EDITOR_MAX_WIDTH = 420;
+  const INLINE_EDITOR_HEIGHT = 88;
   const [tree, setTree] = useState(null);
   const [expandedPaths, setExpandedPaths] = useState(() => loadExpandedPaths(rootPath));
   const [warningMap, setWarningMap] = useState({});
@@ -346,6 +374,7 @@ export default function FileTree({ rootPath, onSelectFile, selectedFilePath, rel
   const clipboardRef = useRef({ mode: "", paths: [] });
   const rowElementRefs = useRef(new Map());
   const hoverExpandTimerRef = useRef(null);
+  const inlineEditorInputRef = useRef(null);
 
   function closeContextMenu() {
     setContextMenu(null);
@@ -451,18 +480,66 @@ export default function FileTree({ rootPath, onSelectFile, selectedFilePath, rel
     return findNodeByPath(tree, activePath) || findNodeByPath(tree, rootPath);
   }
 
-  function getCreationDirectoryPath() {
-    const activeNode = getActiveNode();
-    return getSelectionDirectoryPath(activeNode) || rootPath;
+  function getInlineEditorPlacement(targetPath, fallbackPosition = {}) {
+    const targetElement = targetPath ? rowElementRefs.current.get(targetPath) : null;
+    if (targetElement) {
+      const rect = targetElement.getBoundingClientRect();
+      const width = Math.min(Math.max(rect.width, INLINE_EDITOR_MIN_WIDTH), INLINE_EDITOR_MAX_WIDTH);
+      const x = Math.max(8, Math.min(rect.left, window.innerWidth - width - 8));
+      const y = Math.max(8, Math.min(rect.bottom + 2, window.innerHeight - INLINE_EDITOR_HEIGHT));
+      return { x, y, width };
+    }
+
+    const width = Math.min(Math.max(Number(fallbackPosition.width) || INLINE_EDITOR_MIN_WIDTH, INLINE_EDITOR_MIN_WIDTH), INLINE_EDITOR_MAX_WIDTH);
+    const xFallback = Number.isFinite(Number(fallbackPosition.x)) ? Number(fallbackPosition.x) : 8;
+    const yFallback = Number.isFinite(Number(fallbackPosition.y)) ? Number(fallbackPosition.y) : 8;
+    const x = Math.max(8, Math.min(xFallback, window.innerWidth - width - 8));
+    const y = Math.max(8, Math.min(yFallback, window.innerHeight - INLINE_EDITOR_HEIGHT));
+    return { x, y, width };
   }
 
-  function openCreateDialog(type) {
+  async function getExistingEntryNames(directoryPath, fallbackNode = null) {
+    const targetNode = fallbackNode && fallbackNode.type === "directory"
+      ? fallbackNode
+      : findNodeByPath(tree, directoryPath);
+    const namesFromTree = getEntryNamesFromNode(targetNode);
+    if (namesFromTree) {
+      return namesFromTree;
+    }
+
+    try {
+      const entries = await listDirectory(directoryPath);
+      return entries.map((entry) => entry.name).filter(Boolean);
+    } catch {
+      return [];
+    }
+  }
+
+  function getCreationDirectoryPath(targetNode = null) {
+    const resolvedNode =
+      targetNode && typeof targetNode === "object"
+        ? targetNode
+        : targetNode
+          ? findNodeByPath(tree, targetNode)
+          : getActiveNode();
+    return getSelectionDirectoryPath(resolvedNode) || rootPath;
+  }
+
+  async function openCreateDialog(type, targetNode = null, fallbackPosition = null) {
     void bringWindowToFront();
-    const directoryPath = getCreationDirectoryPath();
+    const directoryPath = getCreationDirectoryPath(targetNode);
+    const placement = getInlineEditorPlacement(directoryPath, fallbackPosition || {});
+    const existingNames = await getExistingEntryNames(directoryPath, targetNode);
+    const value =
+      type === "file"
+        ? getUniqueName(existingNames, "untitled", ".txt")
+        : getUniqueName(existingNames, "New Folder");
     setCreateDialog({
       type,
       directoryPath,
-      value: type === "file" ? "untitled.txt" : "new-folder"
+      value,
+      error: "",
+      ...placement
     });
   }
 
@@ -473,11 +550,20 @@ export default function FileTree({ rootPath, onSelectFile, selectedFilePath, rel
 
     const nextName = createDialog.value.trim();
     if (!nextName) {
-      setCreateDialog(null);
+      setCreateDialog((prev) => (prev ? { ...prev, error: "Name is required." } : prev));
       return;
     }
 
     try {
+      const targetNode = findNodeByPath(tree, createDialog.directoryPath);
+      const existingNames = await getExistingEntryNames(createDialog.directoryPath, targetNode);
+      if (existingNames.some((name) => String(name || "").toLowerCase() === nextName.toLowerCase())) {
+        setCreateDialog((prev) =>
+          prev ? { ...prev, error: "A file or folder with this name already exists." } : prev
+        );
+        return;
+      }
+
       await bringWindowToFront();
       if (createDialog.type === "file") {
         const created = await createFile(createDialog.directoryPath, nextName);
@@ -501,16 +587,22 @@ export default function FileTree({ rootPath, onSelectFile, selectedFilePath, rel
       }
       setCreateDialog(null);
     } catch (createError) {
-      setError(createError?.message || "Failed to create entry");
+      setCreateDialog((prev) =>
+        prev ? { ...prev, error: createError?.message || "Failed to create entry" } : prev
+      );
     }
   }
 
   async function renameNode(node) {
     closeContextMenu();
     await bringWindowToFront();
+    const placement = getInlineEditorPlacement(node.path);
     setRenameDialog({
       node,
-      value: node.name
+      value: node.name || "",
+      originalName: node.name || "",
+      error: "",
+      ...placement
     });
   }
 
@@ -926,12 +1018,53 @@ export default function FileTree({ rootPath, onSelectFile, selectedFilePath, rel
     };
   }, [contextMenu]);
 
+  useEffect(() => {
+    if (!renameDialog && !createDialog) {
+      return undefined;
+    }
+
+    const frame = window.requestAnimationFrame(() => {
+      inlineEditorInputRef.current?.focus();
+      inlineEditorInputRef.current?.select?.();
+    });
+
+    return () => {
+      window.cancelAnimationFrame(frame);
+    };
+  }, [createDialog, renameDialog]);
+
+  useEffect(() => {
+    if (!renameDialog && !createDialog) {
+      return undefined;
+    }
+
+    function handleInlineEditorPointerDown() {
+      setRenameDialog(null);
+      setCreateDialog(null);
+    }
+
+    function handleInlineEditorKeyDown(event) {
+      if (event.key === "Escape") {
+        setRenameDialog(null);
+        setCreateDialog(null);
+      }
+    }
+
+    window.addEventListener("pointerdown", handleInlineEditorPointerDown);
+    window.addEventListener("keydown", handleInlineEditorKeyDown);
+    return () => {
+      window.removeEventListener("pointerdown", handleInlineEditorPointerDown);
+      window.removeEventListener("keydown", handleInlineEditorKeyDown);
+    };
+  }, [createDialog, renameDialog]);
+
   async function handleRename(node) {
     closeContextMenu();
     await bringWindowToFront();
     setRenameDialog({
       node,
-      value: node.name
+      value: node.name || "",
+      originalName: node.name || ""
     });
   }
 
@@ -1043,20 +1176,40 @@ export default function FileTree({ rootPath, onSelectFile, selectedFilePath, rel
     }
 
     const nextName = renameDialog.value.trim();
-    if (!nextName || nextName === renameDialog.node.name) {
+    if (!nextName || nextName === renameDialog.originalName) {
       setRenameDialog(null);
       return;
     }
 
-    const renamed = await renameFile(renameDialog.node.path, nextName);
-    if (selectedFilePath === renameDialog.node.path) {
-      onSelectFile(renamed);
+    try {
+      const parentPath = renameDialog.node.parentPath || rootPath;
+      const existingNames = await getExistingEntryNames(parentPath, findNodeByPath(tree, parentPath));
+      const currentNameKey = String(renameDialog.originalName || renameDialog.node.name || "").toLowerCase();
+      const conflictExists = existingNames.some((name) => {
+        const nameKey = String(name || "").toLowerCase();
+        return nameKey === nextName.toLowerCase() && nameKey !== currentNameKey;
+      });
+      if (conflictExists) {
+        setRenameDialog((prev) =>
+          prev ? { ...prev, error: "A file or folder with this name already exists." } : prev
+        );
+        return;
+      }
+
+      const renamed = await renameFile(renameDialog.node.path, nextName);
+      if (selectedFilePath === renameDialog.node.path) {
+        onSelectFile(renamed);
+      }
+      if (activePath === renameDialog.node.path) {
+        setActivePath(renamed.path);
+      }
+      setRenameDialog(null);
+      await loadRoot();
+    } catch (renameError) {
+      setRenameDialog((prev) =>
+        prev ? { ...prev, error: renameError?.message || "Failed to rename entry" } : prev
+      );
     }
-    if (activePath === renameDialog.node.path) {
-      setActivePath(renamed.path);
-    }
-    setRenameDialog(null);
-    await loadRoot();
   }
 
   const visibleNodes = useMemo(() => flattenTree(tree, expandedPaths, warningMap, sortMode), [tree, expandedPaths, warningMap, sortMode]);
@@ -1459,7 +1612,8 @@ export default function FileTree({ rootPath, onSelectFile, selectedFilePath, rel
         return (
           <div
             key={row.key}
-          className={`tree-row tree-row-root ${node.ignored ? "tree-row-ignored" : ""} ${isSelected ? "selected" : ""} ${isActive ? "active" : ""} ${isDropTarget ? "tree-row-drop-target" : ""}`}
+            ref={setRowElementRef(node.path)}
+            className={`tree-row tree-row-root ${node.ignored ? "tree-row-ignored" : ""} ${isSelected ? "selected" : ""} ${isActive ? "active" : ""} ${isDropTarget ? "tree-row-drop-target" : ""}`}
             style={{ height: `${ROW_HEIGHT}px`, paddingLeft: `${10 + level * 14}px` }}
           >
             <button
@@ -1506,7 +1660,7 @@ export default function FileTree({ rootPath, onSelectFile, selectedFilePath, rel
                 onClick={(event) => {
                   event.preventDefault();
                   event.stopPropagation();
-                  openCreateDialog("file");
+                  openCreateDialog("file", node);
                 }}
               >
                 <span className="tree-action-icon tree-action-icon-file" aria-hidden="true" />
@@ -1519,7 +1673,7 @@ export default function FileTree({ rootPath, onSelectFile, selectedFilePath, rel
                 onClick={(event) => {
                   event.preventDefault();
                   event.stopPropagation();
-                  openCreateDialog("directory");
+                  openCreateDialog("directory", node);
                 }}
               >
                 <span className="tree-action-icon tree-action-icon-folder" aria-hidden="true" />
@@ -1532,6 +1686,7 @@ export default function FileTree({ rootPath, onSelectFile, selectedFilePath, rel
       return (
         <button
           key={row.key}
+          ref={setRowElementRef(node.path)}
           draggable={node.path !== rootPath}
           className={rowClassName}
           style={{ height: `${ROW_HEIGHT}px`, paddingLeft: `${10 + level * 14}px` }}
@@ -1674,7 +1829,7 @@ export default function FileTree({ rootPath, onSelectFile, selectedFilePath, rel
             closeContextMenu();
             selectPath(contextMenu.node.path, { preserveActive: true });
             setActivePath(contextMenu.node.path);
-            openCreateDialog("file");
+            openCreateDialog("file", contextMenu.node, { x: contextMenu.x, y: contextMenu.y });
           }}>
             新規ファイル
           </button>
@@ -1682,7 +1837,7 @@ export default function FileTree({ rootPath, onSelectFile, selectedFilePath, rel
             closeContextMenu();
             selectPath(contextMenu.node.path, { preserveActive: true });
             setActivePath(contextMenu.node.path);
-            openCreateDialog("directory");
+            openCreateDialog("directory", contextMenu.node, { x: contextMenu.x, y: contextMenu.y });
           }}>
             新規フォルダ
           </button>
@@ -1710,18 +1865,20 @@ export default function FileTree({ rootPath, onSelectFile, selectedFilePath, rel
         </div>,
         document.body
       ) : null}
-      {renameDialog ? (
+      {renameDialog && typeof document !== "undefined" ? createPortal(
         <div
-          className="tree-context-menu tree-rename-dialog"
-          style={{ left: "50%", top: "50%", transform: "translate(-50%, -50%)" }}
+          className="tree-inline-editor-portal tree-inline-editor-rename"
+          style={{ left: renameDialog.x, top: renameDialog.y, width: renameDialog.width }}
+          onPointerDown={(event) => event.stopPropagation()}
           onClick={(event) => event.stopPropagation()}
+          onContextMenu={(event) => event.preventDefault()}
         >
           <input
-            autoFocus
-            className="tree-rename-input"
+            ref={inlineEditorInputRef}
+            className="tree-inline-editor-input tree-rename-input"
             value={renameDialog.value}
             onChange={(event) =>
-              setRenameDialog((prev) => (prev ? { ...prev, value: event.target.value } : prev))
+              setRenameDialog((prev) => (prev ? { ...prev, value: event.target.value, error: "" } : prev))
             }
             onKeyDown={(event) => {
               if (event.key === "Enter") {
@@ -1734,7 +1891,8 @@ export default function FileTree({ rootPath, onSelectFile, selectedFilePath, rel
               }
             }}
           />
-          <div className="tree-context-menu-actions">
+          {renameDialog.error ? <div className="tree-inline-editor-error">{renameDialog.error}</div> : null}
+          <div className="tree-inline-editor-actions">
             <button type="button" className="tree-context-menu-item" onClick={submitRename}>
               Rename
             </button>
@@ -1742,24 +1900,25 @@ export default function FileTree({ rootPath, onSelectFile, selectedFilePath, rel
               Cancel
             </button>
           </div>
-        </div>
+        </div>,
+        document.body
       ) : null}
-      {createDialog ? (
-        <div
-          className="modal-backdrop tree-create-backdrop"
-          onClick={() => setCreateDialog(null)}
-        >
+      {createDialog && typeof document !== "undefined" ? createPortal(
+        <>
+          <div className="modal-backdrop tree-inline-editor-backdrop" onPointerDown={() => setCreateDialog(null)} />
           <div
-            className="tree-context-menu tree-create-dialog"
-            style={{ left: "50%", top: "50%", transform: "translate(-50%, -50%)" }}
+            className="tree-inline-editor-portal tree-inline-editor-create"
+            style={{ left: createDialog.x, top: createDialog.y, width: createDialog.width }}
+            onPointerDown={(event) => event.stopPropagation()}
             onClick={(event) => event.stopPropagation()}
+            onContextMenu={(event) => event.preventDefault()}
           >
             <input
-              autoFocus
-              className="tree-rename-input"
+              ref={inlineEditorInputRef}
+              className="tree-inline-editor-input tree-rename-input"
               value={createDialog.value}
               onChange={(event) =>
-                setCreateDialog((prev) => (prev ? { ...prev, value: event.target.value } : prev))
+                setCreateDialog((prev) => (prev ? { ...prev, value: event.target.value, error: "" } : prev))
               }
               onKeyDown={(event) => {
                 if (event.key === "Enter") {
@@ -1772,7 +1931,8 @@ export default function FileTree({ rootPath, onSelectFile, selectedFilePath, rel
                 }
               }}
             />
-            <div className="tree-context-menu-actions">
+            {createDialog.error ? <div className="tree-inline-editor-error">{createDialog.error}</div> : null}
+            <div className="tree-inline-editor-actions">
               <button type="button" className="tree-context-menu-item" onClick={submitCreateDialog}>
                 Create
               </button>
@@ -1781,7 +1941,8 @@ export default function FileTree({ rootPath, onSelectFile, selectedFilePath, rel
               </button>
             </div>
           </div>
-        </div>
+        </>,
+        document.body
       ) : null}
     </div>
   );
