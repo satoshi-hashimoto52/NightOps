@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import TopBar from "./components/TopBar";
 import FileTree from "./components/FileTree";
 import PaneContainer from "./components/PreviewPane";
+import TerminalDock from "./components/TerminalDock";
 import LaunchPanel from "./components/LaunchPanel";
 import SettingsPanel from "./components/SettingsPanel";
 import BootScreen from "./components/BootScreen";
@@ -22,10 +23,11 @@ import {
   revealFile,
   saveSettings
 } from "./utils/fileLoader";
-import { confirmDiscardUnsaved, getTopStatus, openExternalUrl } from "./utils/system";
+import { confirmDiscardUnsaved, getTopStatus, openExternalUrl, runTerminalCommand as runTerminalCommandApi } from "./utils/system";
 
 const SELECTED_FILE_KEY = "nightops:selected-file";
 const TREE_SORT_KEY = "treeSortMode";
+const TERMINAL_LAYOUT_STORAGE_KEY = "nightops:terminal-layout";
 
 function loadTreeSortMode() {
   try {
@@ -82,6 +84,98 @@ function normalizeSettingsOpacity(settings) {
   };
 }
 
+function createTerminalLog(level, message) {
+  return {
+    id: `log-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    level,
+    message,
+    timestamp: Date.now()
+  };
+}
+
+function createInitialTerminalPanes(count = 1) {
+  const safeCount = Math.min(Math.max(Number(count) || 1, 1), 3);
+
+  return Array.from({ length: safeCount }, (_, index) => ({
+    id: `term-${index + 1}`,
+    title: `Log ${index + 1}`,
+    logs: [
+      {
+        id: `boot-${index + 1}-1`,
+        level: "info",
+        message: index === 0 ? "Terminal dock ready" : "Log pane ready",
+        timestamp: Date.now()
+      },
+      ...(index === 0
+        ? [
+            {
+              id: "boot-1-2",
+              level: "debug",
+              message: "Enter a command and press Enter",
+              timestamp: Date.now()
+            }
+          ]
+        : [])
+    ],
+    inputValue: "",
+    running: false
+  }));
+}
+
+function loadTerminalLayoutState() {
+  try {
+    const raw = localStorage.getItem(TERMINAL_LAYOUT_STORAGE_KEY);
+    if (!raw) return null;
+
+    const parsed = JSON.parse(raw);
+
+    const dock = parsed.dock === "bottom" ? "bottom" : "right";
+    const visible = Boolean(parsed.visible);
+    const size = Number.isFinite(parsed.size) ? parsed.size : 360;
+    const paneCount = Math.min(Math.max(Number(parsed.paneCount) || 1, 1), 3);
+
+    const paneSizes = Array.isArray(parsed.paneSizes)
+      ? parsed.paneSizes.slice(0, paneCount).map((value) => {
+          const numeric = Number(value);
+          return Number.isFinite(numeric) && numeric > 0 ? numeric : 1;
+        })
+      : [];
+
+    while (paneSizes.length < paneCount) {
+      paneSizes.push(1);
+    }
+
+    return {
+      visible,
+      dock,
+      size,
+      paneCount,
+      paneSizes
+    };
+  } catch (error) {
+    console.warn("Failed to load terminal layout", error);
+    return null;
+  }
+}
+
+function saveTerminalLayoutState(layout) {
+  try {
+    const paneCount = Math.min(Math.max(layout.panes?.length || 1, 1), 3);
+
+    const payload = {
+      visible: Boolean(layout.visible),
+      dock: layout.dock === "bottom" ? "bottom" : "right",
+      size: Number.isFinite(layout.size) ? layout.size : 360,
+      paneCount,
+      paneSizes: (layout.paneSizes || []).slice(0, paneCount)
+    };
+
+    localStorage.setItem(TERMINAL_LAYOUT_STORAGE_KEY, JSON.stringify(payload));
+  } catch (error) {
+    console.warn("Failed to save terminal layout", error);
+  }
+}
+
 async function findFileByName(rootPath, query) {
   const normalizedQuery = query.trim().toLowerCase();
   if (!normalizedQuery) {
@@ -130,6 +224,19 @@ export default function App() {
   const [browseMenu, setBrowseMenu] = useState(null);
   const [sortMode, setSortMode] = useState(() => loadTreeSortMode());
   const [unsavedCount, setUnsavedCount] = useState(0);
+  const [terminalLayout, setTerminalLayout] = useState(() => {
+    const saved = loadTerminalLayoutState();
+    const paneCount = saved?.paneCount ?? 1;
+
+    return {
+      visible: saved?.visible ?? false,
+      dock: saved?.dock ?? "right",
+      size: saved?.size ?? 360,
+      panes: createInitialTerminalPanes(paneCount),
+      activePaneId: "term-1",
+      paneSizes: saved?.paneSizes ?? Array.from({ length: paneCount }, () => 1)
+    };
+  });
   const leftPanelRef = useRef(null);
   const paneContainerRef = useRef(null);
   const [settings, setSettings] = useState({
@@ -177,6 +284,161 @@ export default function App() {
       )
     );
   }, []);
+
+  const appendTerminalLog = useCallback((paneId, level, message) => {
+    if (!paneId) {
+      return;
+    }
+
+    setTerminalLayout((current) => {
+      const nextPanes = current.panes.map((pane) => {
+        if (pane.id !== paneId) {
+          return pane;
+        }
+
+        return {
+          ...pane,
+          logs: [...(pane.logs || []), createTerminalLog(level, message)].slice(-1000)
+        };
+      });
+
+      return {
+        ...current,
+        panes: nextPanes
+      };
+    });
+  }, []);
+
+  const appendOutputLines = useCallback(
+    (paneId, level, text) => {
+      String(text ?? "")
+        .trimEnd()
+        .split(/\r?\n/)
+        .filter((line) => line.length > 0)
+        .forEach((line) => appendTerminalLog(paneId, level, line));
+    },
+    [appendTerminalLog]
+  );
+
+  const appendActiveTerminalLog = useCallback((level, message) => {
+    setTerminalLayout((current) => {
+      const activePaneId = current.activePaneId || current.panes[0]?.id;
+      if (!activePaneId) {
+        return current;
+      }
+
+      const nextPanes = current.panes.map((pane) => {
+        if (pane.id !== activePaneId) {
+          return pane;
+        }
+
+        return {
+          ...pane,
+          logs: [...(pane.logs || []), createTerminalLog(level, message)].slice(-1000)
+        };
+      });
+
+      return {
+        ...current,
+        panes: nextPanes
+      };
+    });
+  }, []);
+
+  const clearTerminalPaneLogs = useCallback((paneId) => {
+    setTerminalLayout((current) => {
+      const targetPaneId = paneId || current.activePaneId || current.panes[0]?.id;
+      if (!targetPaneId) {
+        return current;
+      }
+
+      return {
+        ...current,
+        panes: current.panes.map((pane) =>
+          pane.id === targetPaneId
+            ? {
+                ...pane,
+                logs: []
+              }
+            : pane
+        )
+      };
+    });
+  }, []);
+
+  const updateTerminalPaneInput = useCallback((paneId, value) => {
+    if (!paneId) {
+      return;
+    }
+
+    setTerminalLayout((current) => ({
+      ...current,
+      panes: current.panes.map((pane) => (pane.id === paneId ? { ...pane, inputValue: value } : pane))
+    }));
+  }, []);
+
+  const runTerminalCommand = useCallback(
+    async (paneId) => {
+      const pane = terminalLayout.panes.find((item) => item.id === paneId);
+      const command = pane?.inputValue?.trim();
+
+      if (!command || pane?.running) {
+        return;
+      }
+
+      if (!rootPath) {
+        appendTerminalLog(paneId, "error", "rootPath is not set");
+        return;
+      }
+
+      appendTerminalLog(paneId, "debug", `❯ ${command}`);
+
+      setTerminalLayout((current) => ({
+        ...current,
+        panes: current.panes.map((item) =>
+          item.id === paneId ? { ...item, running: true, inputValue: "" } : item
+        )
+      }));
+
+      try {
+        const result = await runTerminalCommandApi(command, rootPath);
+        const stdoutText = String(result?.stdout ?? "").trimEnd();
+        const stderrText = String(result?.stderr ?? "").trimEnd();
+
+        if (stdoutText) {
+          appendOutputLines(paneId, "info", stdoutText);
+        }
+
+        if (stderrText) {
+          appendOutputLines(paneId, result?.exitCode === 0 ? "warn" : "error", stderrText);
+        }
+
+        appendTerminalLog(
+          paneId,
+          result?.exitCode === 0 ? "debug" : "error",
+          `exit code: ${result?.exitCode ?? 0}`
+        );
+      } catch (error) {
+        appendTerminalLog(paneId, "error", error?.message || String(error));
+      } finally {
+        setTerminalLayout((current) => ({
+          ...current,
+          panes: current.panes.map((item) => (item.id === paneId ? { ...item, running: false } : item))
+        }));
+      }
+    },
+    [appendOutputLines, appendTerminalLog, rootPath, terminalLayout]
+  );
+
+  useEffect(() => {
+    saveTerminalLayoutState(terminalLayout);
+  }, [
+    terminalLayout.visible,
+    terminalLayout.dock,
+    terminalLayout.size,
+    terminalLayout.panes.length,
+    terminalLayout.paneSizes
+  ]);
 
   const backgroundOpacity = normalizeOpacityPercent(settings.backgroundOpacity, 18);
   const containerOpacity = normalizeOpacityPercent(settings.containerOpacity, 28);
@@ -388,6 +650,15 @@ export default function App() {
         return;
       }
 
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "j") {
+        event.preventDefault();
+        setTerminalLayout((current) => ({
+          ...current,
+          visible: !current.visible
+        }));
+        return;
+      }
+
       if (!event.ctrlKey) {
         return;
       }
@@ -478,6 +749,7 @@ export default function App() {
     setRootPath(nextPath);
     setSelectedFile(null);
     setNotice("Directory applied");
+    appendActiveTerminalLog("info", `Directory applied: ${nextPath}`);
   }
 
   async function handleBrowseDirectory() {
@@ -833,15 +1105,29 @@ export default function App() {
         ) : null}
         <main className="right-panel">
           <div className="panel-title">Preview / Editor</div>
-          <PaneContainer
-            ref={paneContainerRef}
-            selectedFile={selectedFile}
-            onSelectFile={handleSelectFile}
-            onSaved={() => setNotice("Saved")}
-            onPaneStateChange={handlePaneStateChange}
-            markdownHeadingColors={previewMarkdownHeadingColors.length > 0 ? previewMarkdownHeadingColors : settings.markdownHeadingColors}
-            markdownHeadingSizes={previewMarkdownHeadingSizes.length > 0 ? previewMarkdownHeadingSizes : settings.markdownHeadingSizes}
-          />
+          <div
+            className={`right-panel-body ${
+              terminalLayout.visible ? `right-panel-body-${terminalLayout.dock}` : "right-panel-body-single"
+            }`}
+          >
+            <PaneContainer
+              ref={paneContainerRef}
+              selectedFile={selectedFile}
+              onSelectFile={handleSelectFile}
+              onSaved={() => setNotice("Saved")}
+              onPaneStateChange={handlePaneStateChange}
+              markdownHeadingColors={previewMarkdownHeadingColors.length > 0 ? previewMarkdownHeadingColors : settings.markdownHeadingColors}
+              markdownHeadingSizes={previewMarkdownHeadingSizes.length > 0 ? previewMarkdownHeadingSizes : settings.markdownHeadingSizes}
+            />
+            <TerminalDock
+              layout={terminalLayout}
+              onChangeLayout={setTerminalLayout}
+              rootPath={rootPath}
+              onClearPaneLogs={clearTerminalPaneLogs}
+              onChangePaneInput={updateTerminalPaneInput}
+              onRunCommand={runTerminalCommand}
+            />
+          </div>
         </main>
       </div>
       {launchOpen ? (

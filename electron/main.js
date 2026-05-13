@@ -4,7 +4,7 @@ import fs from "fs/promises";
 import { createReadStream, existsSync, watch } from "fs";
 import os from "os";
 import path from "path";
-import { execFile } from "child_process";
+import { exec, execFile } from "child_process";
 import { promisify } from "util";
 import { fileURLToPath } from "url";
 import si from "systeminformation";
@@ -1122,6 +1122,28 @@ ipcMain.handle("fs:copy-path", async (_event, filePath) => copyFullPath(filePath
 ipcMain.handle("codex:launch", async (_event, payload) =>
   launchCodex(payload.directoryPath, payload.model, payload.promptTemplate)
 );
+ipcMain.handle("terminal:run-command", async (_event, { command, cwd }) => {
+  return new Promise((resolve) => {
+    exec(
+      command,
+      {
+        cwd,
+        shell: "/bin/zsh",
+        timeout: 30000,
+        maxBuffer: 1024 * 1024
+      },
+      (error, stdout, stderr) => {
+        resolve({
+          stdout,
+          stderr,
+          exitCode: error?.code ?? 0,
+          signal: error?.signal ?? null,
+          timedOut: Boolean(error?.killed)
+        });
+      }
+    );
+  });
+});
 
 app.whenReady().then(() => {
   createWindow();

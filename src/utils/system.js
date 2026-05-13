@@ -33,3 +33,8 @@ export async function confirmDiscardUnsaved(count) {
   const api = await getApi();
   return api.confirmDiscardUnsaved(count);
 }
+
+export async function runTerminalCommand(command, cwd) {
+  const api = await getApi();
+  return api.runTerminalCommand({ command, cwd });
+}

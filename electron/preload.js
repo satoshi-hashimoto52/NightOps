@@ -35,7 +35,8 @@ const exposedApi = {
     ipcRenderer.invoke("fs:copy-into", sourcePath, targetDirectoryPath),
   revealFile: (filePath) => ipcRenderer.invoke("fs:reveal", filePath),
   copyFilePath: (filePath) => ipcRenderer.invoke("fs:copy-path", filePath),
-  launchCodex: (payload) => ipcRenderer.invoke("codex:launch", payload)
+  launchCodex: (payload) => ipcRenderer.invoke("codex:launch", payload),
+  runTerminalCommand: (payload) => ipcRenderer.invoke("terminal:run-command", payload)
 };
 
 contextBridge.exposeInMainWorld("api", exposedApi);
