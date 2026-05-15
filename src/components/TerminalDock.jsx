@@ -65,7 +65,8 @@ function TerminalPane({
   onSelectPane,
   onRemovePane,
   onRegisterTerminalActions,
-  onRegisterPaneBody
+  onRegisterPaneBody,
+  onStatusChange
 }) {
   const terminalHostRef = useRef(null);
   const terminalRef = useRef(null);
@@ -73,16 +74,17 @@ function TerminalPane({
   const currentLineRef = useRef("");
   const isActiveRef = useRef(isActive);
   const isMountedRef = useRef(false);
+  const suppressExitEventRef = useRef(false);
+  const suppressExitPtyIdRef = useRef("");
+  const previousRootPathRef = useRef(rootPath);
   const ptyIdRef = useRef("");
   const ptyStateRef = useRef({
-    starting: false,
-    connected: false,
+    status: "starting",
     failed: false,
     errorMessage: ""
   });
   const [ptyState, setPtyState] = useState({
-    starting: false,
-    connected: false,
+    status: "starting",
     failed: false,
     errorMessage: ""
   });
@@ -106,6 +108,101 @@ function TerminalPane({
         cols: terminalRef.current.cols,
         rows: terminalRef.current.rows
       });
+    }
+  }
+
+  function setSessionState(status, errorMessage = "") {
+    const nextState = {
+      status,
+      failed: status === "failed",
+      errorMessage
+    };
+    ptyStateRef.current = nextState;
+    setPtyState(nextState);
+    onStatusChange?.(pane.id, status);
+  }
+
+  function clearTerminalScreen() {
+    currentLineRef.current = "";
+    terminalRef.current?.clear();
+  }
+
+  function writeTerminalMessage(message) {
+    if (!terminalRef.current) {
+      return;
+    }
+
+    terminalRef.current.write(`\r\n${message}\r\n`);
+  }
+
+  async function killCurrentSession(nextStatus = "killed", message = "[terminal] session killed", suppressExit = true) {
+    const currentPtyId = ptyIdRef.current;
+    if (suppressExit) {
+      suppressExitPtyIdRef.current = currentPtyId;
+    }
+
+    ptyIdRef.current = "";
+
+    if (currentPtyId) {
+      try {
+        await killTerminalSession({ ptyId: currentPtyId });
+      } catch {
+        // IPC failures are handled by the UI state below.
+      }
+    }
+
+    clearTerminalScreen();
+    writeTerminalMessage(message);
+    setSessionState(nextStatus);
+  }
+
+  async function startCurrentSession() {
+    previousRootPathRef.current = rootPath;
+    suppressExitEventRef.current = false;
+
+    setSessionState("starting");
+
+    const result = await startTerminalSession({
+      paneId: pane.id,
+      cwd: rootPath,
+      cols: terminalRef.current?.cols || 80,
+      rows: terminalRef.current?.rows || 24
+    });
+
+    ptyIdRef.current = result?.ptyId || "";
+    setSessionState("ready");
+
+    requestAnimationFrame(() => {
+      fitTerminal();
+      terminalRef.current?.focus();
+    });
+
+    return result;
+  }
+
+  async function restartCurrentSession() {
+    const currentPtyId = ptyIdRef.current;
+    if (currentPtyId) {
+      suppressExitEventRef.current = true;
+      ptyIdRef.current = "";
+      suppressExitPtyIdRef.current = currentPtyId;
+      try {
+        await killTerminalSession({ ptyId: currentPtyId });
+      } catch {
+        // ignore and continue with restart
+      }
+    }
+
+    clearTerminalScreen();
+    writeTerminalMessage("[terminal] session restarting...");
+    try {
+      await startCurrentSession();
+    } catch (error) {
+      const errorMessage = error?.message || String(error);
+      setSessionState("failed", errorMessage);
+      writeTerminalMessage(`[terminal] failed to restart PTY: ${errorMessage}`);
+    } finally {
+      suppressExitEventRef.current = false;
     }
   }
 
@@ -153,7 +250,7 @@ function TerminalPane({
 
       const ptyId = ptyIdRef.current;
       if (!ptyId) {
-        if (!ptyStateRef.current.failed) {
+        if (ptyStateRef.current.status !== "failed") {
           return;
         }
 
@@ -193,18 +290,13 @@ function TerminalPane({
     fitAddonRef.current = fitAddon;
     onRegisterTerminalActions?.(pane.id, {
       clear: () => {
-        currentLineRef.current = "";
-        const currentPtyId = ptyIdRef.current;
-        if (currentPtyId) {
-          void writeTerminalSession({
-            ptyId: currentPtyId,
-            data: "\u000c"
-          });
-          return;
-        }
-
-        term.clear();
-        term.write("❯ ");
+        clearTerminalScreen();
+      },
+      restart: () => {
+        void restartCurrentSession();
+      },
+      kill: () => {
+        void killCurrentSession();
       },
       focus: () => {
         term.focus();
@@ -220,12 +312,6 @@ function TerminalPane({
             cols: terminalRef.current.cols,
             rows: terminalRef.current.rows
           });
-        }
-      },
-      kill: () => {
-        const currentPtyId = ptyIdRef.current;
-        if (currentPtyId) {
-          void killTerminalSession({ ptyId: currentPtyId });
         }
       }
     });
@@ -314,6 +400,15 @@ function TerminalPane({
           return;
         }
 
+        if (suppressExitEventRef.current) {
+          return;
+        }
+
+        if (payload?.ptyId && payload.ptyId === suppressExitPtyIdRef.current) {
+          suppressExitPtyIdRef.current = "";
+          return;
+        }
+
         if (!payload || payload.paneId !== pane.id) {
           return;
         }
@@ -327,14 +422,9 @@ function TerminalPane({
         }
 
         const exitCode = Number.isFinite(payload.exitCode) ? payload.exitCode : 0;
-        const signalText = payload.signal ? `, signal ${payload.signal}` : "";
-        terminalRef.current?.write(`\r\n[pty exited: ${exitCode}${signalText}]\r\n❯ `);
-        setPtyState({
-          starting: false,
-          connected: false,
-          failed: true,
-          errorMessage: "PTY exited"
-        });
+        const signalValue = payload.signal ?? null;
+        writeTerminalMessage(`[terminal] session exited. code=${exitCode} signal=${signalValue}`);
+        setSessionState("exited");
       });
     }
 
@@ -355,59 +445,24 @@ function TerminalPane({
 
     let cancelled = false;
     isMountedRef.current = true;
+    const previousRootPath = previousRootPathRef.current;
+    previousRootPathRef.current = rootPath;
 
-    setPtyState({
-      starting: true,
-      connected: false,
-      failed: false,
-      errorMessage: ""
+    if (previousRootPath && previousRootPath !== rootPath) {
+      clearTerminalScreen();
+      writeTerminalMessage("[terminal] workspace changed. restarting session...");
+    }
+
+    void startCurrentSession().catch((error) => {
+      if (cancelled) {
+        return;
+      }
+
+      ptyIdRef.current = "";
+      const errorMessage = error?.message || String(error);
+      setSessionState("failed", errorMessage);
+      writeTerminalMessage(`[terminal] failed to start PTY: ${errorMessage}`);
     });
-
-    void startTerminalSession({
-      paneId: pane.id,
-      cwd: rootPath,
-      cols: terminalRef.current?.cols || 80,
-      rows: terminalRef.current?.rows || 24
-    })
-      .then((result) => {
-        if (cancelled) {
-          if (result?.ptyId) {
-            void killTerminalSession({ ptyId: result.ptyId });
-          }
-          return;
-        }
-
-        ptyIdRef.current = result?.ptyId || "";
-        setPtyState({
-          starting: false,
-          connected: true,
-          failed: false,
-          errorMessage: ""
-        });
-
-        requestAnimationFrame(() => {
-          fitTerminal();
-          terminalRef.current?.focus();
-        });
-      })
-      .catch((error) => {
-        if (cancelled) {
-          return;
-        }
-
-        ptyIdRef.current = "";
-        const errorMessage = error?.message || String(error);
-        setPtyState({
-          starting: false,
-          connected: false,
-          failed: true,
-          errorMessage
-        });
-
-        if (terminalRef.current) {
-          terminalRef.current.write(`\r\n[terminal] failed to start PTY\r\n[terminal] ${errorMessage}\r\n❯ `);
-        }
-      });
 
     return () => {
       cancelled = true;
@@ -415,6 +470,8 @@ function TerminalPane({
       const ptyId = ptyIdRef.current;
       ptyIdRef.current = "";
       if (ptyId) {
+        suppressExitEventRef.current = true;
+        suppressExitPtyIdRef.current = ptyId;
         void killTerminalSession({ ptyId });
       }
     };
@@ -434,10 +491,19 @@ function TerminalPane({
     });
   }, [isActive]);
 
-  const ptyConnected = ptyState.connected;
-  const ptyFailed = ptyState.failed;
-  const ptyStarting = ptyState.starting;
-  const paneBodyClassName = `terminal-pane-body terminal-pane-content ${ptyFailed ? "failed" : ""}`;
+  const statusLabel =
+    ptyState.status === "ready"
+      ? "READY"
+      : ptyState.status === "starting"
+        ? "STARTING"
+        : ptyState.status === "exited"
+          ? "EXITED"
+          : ptyState.status === "killed"
+            ? "KILLED"
+            : ptyState.status === "failed"
+              ? "FAILED"
+              : String(ptyState.status || "").toUpperCase();
+  const paneBodyClassName = `terminal-pane-body terminal-pane-content ${ptyState.status === "failed" ? "failed" : ""}`;
 
   const paneLogs = Array.isArray(pane.logs)
     ? pane.logs
@@ -453,7 +519,7 @@ function TerminalPane({
   return (
     <article
       key={pane.id}
-      className={`terminal-pane ${isActive ? "active" : ""} ${ptyStarting ? "starting" : ""} ${ptyFailed ? "failed" : ""}`}
+      className={`terminal-pane ${isActive ? "active" : ""} ${ptyState.status}`}
       onPointerDown={() => {
         isActiveRef.current = true;
         onSelectPane(pane.id);
@@ -461,9 +527,7 @@ function TerminalPane({
     >
       <div className="terminal-pane-header">
         <span className="terminal-pane-title">{pane.title}</span>
-        <span className="terminal-pane-status">
-          {ptyStarting ? "Starting" : ptyConnected ? "Running" : ptyFailed ? "Stopped" : "Idle"}
-        </span>
+        <span className={`terminal-pane-status ${ptyState.status}`}>{statusLabel}</span>
         <button
           type="button"
           className="terminal-pane-close"
@@ -513,13 +577,13 @@ function TerminalPane({
 export default function TerminalDock({
   layout,
   onChangeLayout,
-  rootPath,
-  onClearPaneLogs
+  rootPath
 }) {
   const resizeStateRef = useRef(null);
   const paneResizeStateRef = useRef(null);
   const paneBodyRefs = useRef(new Map());
   const paneTerminalActionsRef = useRef(new Map());
+  const [paneStatuses, setPaneStatuses] = useState({});
 
   useEffect(() => {
     return () => {
@@ -590,15 +654,57 @@ export default function TerminalDock({
     paneBodyRefs.current.delete(paneId);
   }, []);
 
-  function clearLogs() {
-    const targetPaneId = layout.activePaneId || panes[0]?.id;
-    if (!targetPaneId) {
+  const registerPaneStatus = useCallback((paneId, status) => {
+    if (!paneId) {
       return;
     }
 
-    onClearPaneLogs?.(targetPaneId);
-    paneTerminalActionsRef.current.get(targetPaneId)?.clear?.();
+    setPaneStatuses((current) => {
+      if (!status) {
+        const next = { ...current };
+        delete next[paneId];
+        return next;
+      }
+
+      if (current[paneId] === status) {
+        return current;
+      }
+
+      return {
+        ...current,
+        [paneId]: status
+      };
+    });
+  }, []);
+
+  function getActivePaneActions() {
+    const targetPaneId = layout.activePaneId || panes[0]?.id;
+    if (!targetPaneId) {
+      return null;
+    }
+
+    return paneTerminalActionsRef.current.get(targetPaneId) || null;
   }
+
+  function clearActivePane() {
+    getActivePaneActions()?.clear?.();
+  }
+
+  function restartActivePane() {
+    getActivePaneActions()?.restart?.();
+  }
+
+  function killActivePane() {
+    getActivePaneActions()?.kill?.();
+  }
+
+  const activePane = panes.find((pane) => pane.id === activePaneId) || panes[0] || null;
+  const activeStatus = paneStatuses[activePane?.id] || "starting";
+  const showKillButton = activeStatus === "ready" || activeStatus === "starting";
+  const activeActionLabel = showKillButton ? "KILL" : "RST";
+  const activeActionTitle = showKillButton ? "Kill active terminal" : "Restart active terminal";
+  const activeActionHandler = showKillButton ? killActivePane : restartActivePane;
+  const activeActionDisabled = activeStatus === "starting" && showKillButton;
 
   function addPane() {
     updateLayout((current) => {
@@ -658,6 +764,14 @@ export default function TerminalDock({
         activePaneId: nextActivePaneId || nextPanes[0]?.id || "",
         paneSizes: nextPaneSizes.length > 0 ? nextPaneSizes : [1]
       };
+    });
+    setPaneStatuses((current) => {
+      if (!current[paneId]) {
+        return current;
+      }
+      const next = { ...current };
+      delete next[paneId];
+      return next;
     });
   }
 
@@ -793,6 +907,7 @@ export default function TerminalDock({
         onRemovePane={removePane}
         onRegisterTerminalActions={registerTerminalActions}
         onRegisterPaneBody={registerPaneBody}
+        onStatusChange={registerPaneStatus}
       />
     );
 
@@ -830,8 +945,17 @@ export default function TerminalDock({
           <button type="button" className="terminal-dock-action" onClick={addPane}>
             +
           </button>
-          <button type="button" className="terminal-dock-action" onClick={clearLogs}>
-            Clear
+          <button type="button" className="terminal-dock-action" onClick={clearActivePane}>
+            CLR
+          </button>
+          <button
+            type="button"
+            className="terminal-dock-action"
+            onClick={activeActionHandler}
+            title={activeActionTitle}
+            disabled={activeActionDisabled}
+          >
+            {activeActionLabel}
           </button>
           <button type="button" className="terminal-dock-action terminal-dock-close" onClick={() => onChangeLayout((current) => ({ ...current, visible: false }))}>
             ×

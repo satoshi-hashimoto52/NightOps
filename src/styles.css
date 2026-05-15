@@ -1338,6 +1338,11 @@ textarea {
   background: rgba(52, 60, 71, 0.62);
 }
 
+.terminal-dock-action:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
 .terminal-dock-close {
   color: #f4a5a5;
 }
@@ -1514,11 +1519,20 @@ textarea {
   white-space: nowrap;
 }
 
-.terminal-pane.starting .terminal-pane-status {
+.terminal-pane-status.starting {
   color: #9fd1ff;
 }
 
-.terminal-pane.failed .terminal-pane-status {
+.terminal-pane-status.ready {
+  color: #60a5fa;
+}
+
+.terminal-pane-status.exited,
+.terminal-pane-status.killed {
+  color: #facc15;
+}
+
+.terminal-pane-status.failed {
   color: #ff9b9b;
 }
 

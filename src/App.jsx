@@ -345,27 +345,6 @@ export default function App() {
     });
   }, []);
 
-  const clearTerminalPaneLogs = useCallback((paneId) => {
-    setTerminalLayout((current) => {
-      const targetPaneId = paneId || current.activePaneId || current.panes[0]?.id;
-      if (!targetPaneId) {
-        return current;
-      }
-
-      return {
-        ...current,
-        panes: current.panes.map((pane) =>
-          pane.id === targetPaneId
-            ? {
-                ...pane,
-                logs: []
-              }
-            : pane
-        )
-      };
-    });
-  }, []);
-
   const updateTerminalPaneInput = useCallback((paneId, value) => {
     if (!paneId) {
       return;
@@ -1123,7 +1102,6 @@ export default function App() {
               layout={terminalLayout}
               onChangeLayout={setTerminalLayout}
               rootPath={rootPath}
-              onClearPaneLogs={clearTerminalPaneLogs}
             />
           </div>
         </main>

@@ -1,328 +1,333 @@
-
-Terminal Dock 第4-4段階として、PTYターミナルの操作性を上げるためのセッション制御を追加してください。
-複数PTY化は完了済みなので、今回は「Restart / Kill / Clear / 状態表示」を中心に最小差分で実装してください。
-
----
-
-【目的】
-
-各 Terminal pane を実用しやすくする。
-
-今回追加すること：
-
-- active pane の Clear
-- active pane の Restart
-- active pane の Kill
-- pane ごとの状態表示
-- PTY exit 時の表示
-- rootPath 変更時の挙動整理
+Terminal Dock の RST / KILL 周りを修正してください。
+現在、READY 状態の Terminal pane で RST を押すと `suppressExitEventRef is not defined` が発生しています。
+あわせて、ヘッダーの表示を節約するため、RST と KILL を同時表示せず、active pane の状態に応じて1ボタンで切り替えるようにしてください。
 
 ---
 
-【実装すること】
+【問題】
 
-1. Terminal Dock ヘッダーに以下の操作を追加
+READY 状態で RST 押下時に以下のエラーが発生しています。
+
+ReferenceError: suppressExitEventRef is not defined
+
+発生箇所：
 
 ```text
-TERMINAL   [Right/Bottom] [+] [Clear] [Restart] [Kill] [×]
+TerminalDock.jsx:182
+restartCurrentSession
+````
+
+原因候補：
+
+* `suppressExitEventRef` を使っているが `useRef` 宣言がない
+* 変数名の typo
+* restart 時だけ参照しているが、kill / exit 側と状態管理が不整合
+* restart 中の意図的な kill による exit event を抑制したかったが、ref が未定義
+
+---
+
+# 1. suppressExitEventRef の未定義を修正
+
+TerminalPane 内で `suppressExitEventRef` を使用している場合は、必ず定義してください。
+
+```js
+const suppressExitEventRef = useRef(false);
 ```
 
-既存ヘッダー幅が狭い場合は、テキストを短くしてよいです。
+配置場所：
+
+```js
+const ptyIdRef = useRef(null);
+const ptyStartingRef = useRef(false);
+const ptyConnectedRef = useRef(false);
+const ptyStartFailedRef = useRef(false);
+const suppressExitEventRef = useRef(false);
+```
+
+---
+
+# 2. Restart 時の exit event 抑制
+
+RST は内部的に既存 PTY を kill して再起動するため、その kill による `pty-exit` を通常の EXITED 表示として扱わないでください。
+
+Restart 開始時：
+
+```js
+suppressExitEventRef.current = true;
+```
+
+既存 PTY kill 後、新規 start 成功または失敗後に戻す：
+
+```js
+suppressExitEventRef.current = false;
+```
+
+PTY exit handler 側：
+
+```js
+if (suppressExitEventRef.current) {
+  return;
+}
+```
+
+または、必要なら表示だけ抑制し、状態更新も抑制してください。
+
+---
+
+# 3. finally で必ず戻す
+
+restart が失敗しても suppress が戻らないと、以後の exit が無視されます。
+
+```js
+async function restartCurrentSession() {
+  suppressExitEventRef.current = true;
+
+  try {
+    // kill current pty
+    // clear xterm
+    // start new pty
+  } finally {
+    suppressExitEventRef.current = false;
+  }
+}
+```
+
+---
+
+# 4. RST / KILL ボタンを1つに統合
+
+現在ヘッダーに `RST` と `KILL` が同時表示されていますが、active pane の状態によって1つだけ表示してください。
+
+理由：
+
+* READY / STARTING 中は KILL が必要
+* KILLED / EXITED / FAILED 中は RST が必要
+* RST と KILL を同時に出す必要はない
+* ヘッダー幅を節約できる
+
+---
+
+# 5. active pane の status を取得
+
+TerminalDock 側で active pane の状態を取得してください。
 
 例：
 
-```text
-Clear
-Restart
-Kill
+```js
+const activePane = layout.panes.find((pane) => pane.id === layout.activePaneId) || layout.panes[0];
+const activeStatus = terminalStatuses[activePane?.id] || "unknown";
 ```
 
-または
+実際の状態管理が `TerminalPane` 内部にある場合は、親に status を通知する仕組みを追加してください。
 
-```text
-CLR
-RST
-KILL
+---
+
+# 6. pane status を親へ通知する
+
+現在 status が TerminalPane 内部だけで管理されている場合、TerminalDock が active pane の状態を判断できません。
+
+TerminalDock に `paneStatuses` state を追加してください。
+
+```js
+const [paneStatuses, setPaneStatuses] = useState({});
+```
+
+TerminalPane に callback を渡す：
+
+```jsx
+<TerminalPane
+  ...
+  onStatusChange={(paneId, status) => {
+    setPaneStatuses((current) => ({
+      ...current,
+      [paneId]: status
+    }));
+  }}
+/>
+```
+
+TerminalPane 側で status 変更時に通知：
+
+```js
+function updateStatus(nextStatus) {
+  setStatus(nextStatus);
+  onStatusChange?.(pane.id, nextStatus);
+}
+```
+
+既存の status setter がある場合は、そこへ統合してください。
+
+---
+
+# 7. 状態ごとのボタン表示
+
+active pane の状態に応じて表示するボタンを切り替えてください。
+
+```js
+const canKillActivePane =
+  activeStatus === "ready" ||
+  activeStatus === "starting";
+
+const canRestartActivePane =
+  activeStatus === "killed" ||
+  activeStatus === "exited" ||
+  activeStatus === "failed";
+```
+
+表示：
+
+```jsx
+{canKillActivePane ? (
+  <button
+    type="button"
+    className="terminal-dock-button"
+    onClick={killActivePane}
+    title="Kill active terminal"
+  >
+    KILL
+  </button>
+) : (
+  <button
+    type="button"
+    className="terminal-dock-button"
+    onClick={restartActivePane}
+    title="Restart active terminal"
+  >
+    RST
+  </button>
+)}
 ```
 
 ---
 
-# 1. Clear
+# 8. STARTING 中の扱い
 
-【仕様】
+STARTING 中は KILL を表示してよいですが、kill が不安定なら disabled にしてもよいです。
 
-* active pane の xterm 画面だけ clear する
-* PTY 自体は終了しない
-* 実行中プロセスも止めない
-* 他paneには影響しない
-
-実装例：
+推奨：
 
 ```js
-setClearRequest({
-  paneId: layout.activePaneId,
-  token: Date.now()
-});
+const canKillActivePane = activeStatus === "ready";
 ```
 
-TerminalPane 側：
+安全優先なら、STARTING 中は disabled 表示：
 
-```js
-useEffect(() => {
-  if (!clearRequest) return;
-  if (clearRequest.paneId !== pane.id) return;
-
-  xtermRef.current?.clear();
-}, [clearRequest]);
+```jsx
+<button disabled={activeStatus === "starting"}>
+  KILL
+</button>
 ```
 
 ---
 
-# 2. Restart
+# 9. READY 状態で Restart したい場合
 
-【仕様】
+今回は「1ボタン化」が目的なので、READY 状態では KILL を表示してください。
+
+操作フロー：
+
+```text
+READY → KILL → KILLED → RST → READY
+```
+
+直接 Restart は出さない。
+
+ただし、将来的に右クリックメニューやショートカットで Restart を追加してもよいです。
+
+---
+
+# 10. Clear は維持
+
+CLR はそのまま残してください。
+
+ヘッダー例：
+
+READY時：
+
+```text
+TERMINAL [Right] [+] [CLR] [KILL] [×]
+```
+
+KILLED / EXITED / FAILED時：
+
+```text
+TERMINAL [Right] [+] [CLR] [RST] [×]
+```
+
+---
+
+# 11. Kill の挙動
+
+KILL 押下時：
 
 * active pane の PTY だけ kill
-* 同じ pane の xterm を clear
-* 同じ rootPath で新しい PTY を起動
-* 他paneには影響しない
-
-挙動：
-
-```text
-Restart Log 2
-→ Log 2 の zsh だけ再起動
-→ Log 1 / Log 3 は維持
-```
-
-実装方針：
-
-* restartRequest state を TerminalDock に持つ
-* active pane に token を送る
-* TerminalPane 側で自分宛なら restartPty() を実行
-
-例：
-
-```js
-setRestartRequest({
-  paneId: layout.activePaneId,
-  token: Date.now()
-});
-```
-
-TerminalPane 側：
-
-```js
-useEffect(() => {
-  if (!restartRequest) return;
-  if (restartRequest.paneId !== pane.id) return;
-
-  restartPty();
-}, [restartRequest]);
-```
+* pane は閉じない
+* xterm に `[terminal] session killed` を表示
+* status を KILLED にする
+* 他 pane は維持
 
 ---
 
-# 3. Kill
+# 12. Restart の挙動
 
-【仕様】
+RST 押下時：
 
-* active pane の PTY だけ kill
-* xterm には `[terminal] session killed` を表示
-* pane自体は閉じない
-* 他paneには影響しない
-* Kill後は入力しても実行されない、または echo fallback でよい
-* Restart で復帰できる
-
-実装方針：
-
-```js
-setKillRequest({
-  paneId: layout.activePaneId,
-  token: Date.now()
-});
-```
-
-TerminalPane 側：
-
-```js
-useEffect(() => {
-  if (!killRequest) return;
-  if (killRequest.paneId !== pane.id) return;
-
-  killPtyOnly();
-}, [killRequest]);
-```
+* active pane の PTY を新規起動
+* xterm を必要に応じて clear
+* rootPath を cwd にする
+* status を STARTING → READY にする
+* 他 pane は維持
 
 ---
 
-# 4. paneごとの状態表示
+# 13. exit event の扱い
 
-TerminalPane header に状態を表示してください。
+通常終了：
 
-状態候補：
+* status: EXITED
+* `[terminal] session exited...` を表示
 
-```text
-READY
-RUNNING
-EXITED
-KILLED
-FAILED
-```
+Kill 操作：
 
-最小実装では以下でよいです。
+* status: KILLED
+* `[terminal] session killed` を表示
+* exit event による EXITED 上書きを防ぐ
 
-* PTY接続成功：READY
-* PTY起動失敗：FAILED
-* PTY終了：EXITED
-* Kill押下：KILLED
+Restart 操作：
 
-表示例：
-
-```text
-Log 1    READY
-Log 2    KILLED
-Log 3    FAILED
-```
-
-CSS例：
-
-```css
-.terminal-pane-status {
-  margin-left: auto;
-  font-size: 10px;
-  letter-spacing: 0.08em;
-  opacity: 0.75;
-}
-
-.terminal-pane-status.ready {
-  color: #60a5fa;
-}
-
-.terminal-pane-status.exited,
-.terminal-pane-status.killed {
-  color: #facc15;
-}
-
-.terminal-pane-status.failed {
-  color: #f87171;
-}
-```
+* 旧 PTY の exit event では EXITED 表示しない
+* 新 PTY 起動後 READY にする
 
 ---
 
-# 5. PTY exit 時の表示
+# 14. 禁止
 
-PTY が終了したら、その pane の xterm に終了メッセージを表示してください。
-
-例：
-
-```text
-[terminal] session exited. code=0 signal=null
-```
-
-その後、状態を EXITED にする。
-
-注意：
-
-* exit 通知は対象 pane にだけ出す
-* 他paneには出さない
-
----
-
-# 6. rootPath 変更時
-
-既存仕様を維持してください。
-
-推奨仕様：
-
-* rootPath 変更時は全paneのPTYを再起動
-* 新しい rootPath を cwd にする
-* xterm には以下を表示
-
-```text
-[terminal] workspace changed. restarting session...
-```
-
-ただし、既に実装済みなら大きく変えないこと。
-
----
-
-# 7. Dock非表示時
-
-現在の仕様を維持してください。
-
-* Cmd + J 非表示では PTY を終了しない
-* 再表示時に続きが見える
-* visible true で fit / resize を再実行
-
----
-
-# 8. pane削除時
-
-現在の仕様を維持してください。
-
-* pane削除時だけ、対象paneのPTYを kill
-* 他paneのPTYは維持
-
----
-
-# 9. localStorage
-
-保存しない：
-
-```text
-ptyId
-shell状態
-実行中プロセス
-xterm buffer
-command history
-logs
-pane status
-```
-
-保存するものは従来通り：
-
-```text
-visible
-dock
-size
-paneCount
-paneSizes
-```
-
----
-
-# 10. 禁止
-
-* 複数PTY化を壊さない
-* Cmd + J 非表示でPTYをkillしない
-* pane削除時のkillを消さない
-* ptyIdをlocalStorage保存しない
-* xterm bufferを保存しない
-* TREE / Preview / Editor を触らない
-* node-ptyのspawn-helper権限補正を触らない
-* rebuild設定を触らない
+* RST / KILL を同時表示しない
+* READY 状態で RST ボタンを表示しない
+* KILLED / EXITED / FAILED 状態で KILL ボタンを表示しない
+* suppressExitEventRef を未定義のまま使わない
+* Restart 失敗時に suppressExitEventRef を true のまま残さない
+* 他 pane の PTY を kill しない
+* Cmd + J 非表示で PTY を kill しない
+* pane削除時の kill 仕様を壊さない
 * Right / Bottom / リサイズ処理を壊さない
 
 ---
 
-# 11. 確認
+# 15. 確認
 
 以下を確認してください。
 
-1. Log 1 / Log 2 / Log 3 がそれぞれ独立して動く
-2. Clear で active pane の画面だけ消える
-3. Clear しても実行中プロセスは止まらない
-4. Restart で active pane のPTYだけ再起動する
-5. Restart しても他paneは維持される
-6. Kill で active pane のPTYだけ終了する
-7. Kill後、paneに KILLED 表示が出る
-8. Restart で KILLED pane が復帰する
-9. PTY exit 時に対象paneだけ終了メッセージが出る
-10. Cmd + J 非表示 / 再表示でPTYが維持される
-11. pane削除時は対象paneだけPTYが終了する
-12. npm run build が成功する
+1. READY 状態で RST ボタンが表示されず、KILL が表示される
+2. READY 状態で KILL を押す
+3. active pane のみ KILLED になる
+4. KILLED 状態では KILL が消え、RST が表示される
+5. RST を押すと active pane のみ再起動する
+6. `suppressExitEventRef is not defined` が出ない
+7. Restart 時に一瞬 EXITED 表示で上書きされない
+8. 他 pane の PTY は維持される
+9. CLR は active pane の画面だけ消す
+10. npm run build が成功する
 
 ---
 
@@ -330,12 +335,9 @@ paneSizes
 
 以下のみ提示してください。
 
-* 追加した Clear / Restart / Kill 操作
-* paneごとの status 表示
-* PTY exit 時の表示処理
-* rootPath変更時の扱い
-* localStorageに保存しない項目
+* suppressExitEventRef 未定義エラーの原因
+* suppressExitEventRef の追加箇所
+* Restart / Kill 時の exit event 抑制処理
+* RST / KILL を1ボタン化した箇所
+* active pane status の取得方法
 * npm run build の結果
-
-```
-```
