@@ -77,6 +77,15 @@ function normalizeOpacityPercent(value, fallback) {
   return Math.max(0, Math.min(100, parsed));
 }
 
+function normalizeTerminalFontSize(value, fallback) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) {
+    return fallback;
+  }
+
+  return Math.max(6, Math.min(20, Math.round(parsed)));
+}
+
 let activeFileWatcher = null;
 let activeWatchedPath = "";
 let heicQueue = Promise.resolve();
@@ -911,6 +920,8 @@ async function readSettings() {
     containerOpacity: 28,
     backgroundBlur: 28,
     uiBackgroundBlur: 28,
+    terminalFontSize: 12,
+    terminalFontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
     markdownHeadingColors: DEFAULT_MARKDOWN_HEADING_COLORS,
     markdownHeadingSizes: DEFAULT_MARKDOWN_HEADING_SIZES,
     markdownHeadingColor: DEFAULT_MARKDOWN_HEADING_COLORS[0],
@@ -955,6 +966,11 @@ async function readSettings() {
       Number(parsed.backgroundBlur) >= 0 ? Math.min(100, Number(parsed.backgroundBlur)) : defaultSettings.backgroundBlur;
     const uiBackgroundBlur =
       Number(parsed.uiBackgroundBlur) >= 0 ? Math.min(100, Number(parsed.uiBackgroundBlur)) : backgroundBlur;
+    const terminalFontSize = normalizeTerminalFontSize(parsed.terminalFontSize, defaultSettings.terminalFontSize);
+    const terminalFontFamily =
+      typeof parsed.terminalFontFamily === "string" && parsed.terminalFontFamily.trim()
+        ? parsed.terminalFontFamily.trim()
+        : defaultSettings.terminalFontFamily;
     const markdownHeadingColors = Array.isArray(parsed.markdownHeadingColors)
       ? normalizeHexColorList(parsed.markdownHeadingColors, defaultSettings.markdownHeadingColors)
       : typeof parsed.markdownHeadingColor === "string"
@@ -1007,6 +1023,8 @@ async function readSettings() {
           containerOpacity,
           backgroundBlur,
           uiBackgroundBlur,
+          terminalFontSize,
+          terminalFontFamily,
           ...codexLimitSettings,
           limit5hBaselineTokenEstimate,
           weeklyBaselineTokenEstimate,
@@ -1028,6 +1046,8 @@ async function readSettings() {
         containerOpacity,
         backgroundBlur,
         uiBackgroundBlur,
+        terminalFontSize,
+        terminalFontFamily,
         ...codexLimitSettings,
         limit5hBaselineTokenEstimate,
         weeklyBaselineTokenEstimate,
@@ -1049,6 +1069,8 @@ async function readSettings() {
         containerOpacity,
         backgroundBlur,
         uiBackgroundBlur,
+        terminalFontSize,
+        terminalFontFamily,
         ...codexLimitSettings,
         limit5hBaselineTokenEstimate,
         weeklyBaselineTokenEstimate,
@@ -1103,6 +1125,11 @@ async function saveSettings(settings) {
       Number(settings.uiBackgroundBlur) >= 0
         ? Math.min(100, Number(settings.uiBackgroundBlur))
         : current.uiBackgroundBlur || current.backgroundBlur,
+    terminalFontSize: normalizeTerminalFontSize(settings.terminalFontSize, current.terminalFontSize || 12),
+    terminalFontFamily:
+      typeof settings.terminalFontFamily === "string" && settings.terminalFontFamily.trim()
+        ? settings.terminalFontFamily.trim()
+        : current.terminalFontFamily || "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
     markdownHeadingColors: normalizeHexColorList(
       settings.markdownHeadingColors,
       current.markdownHeadingColors || DEFAULT_MARKDOWN_HEADING_COLORS

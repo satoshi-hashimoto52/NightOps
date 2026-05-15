@@ -1,333 +1,344 @@
-Terminal Dock の RST / KILL 周りを修正してください。
-現在、READY 状態の Terminal pane で RST を押すと `suppressExitEventRef is not defined` が発生しています。
-あわせて、ヘッダーの表示を節約するため、RST と KILL を同時表示せず、active pane の状態に応じて1ボタンで切り替えるようにしてください。
+
+Terminal Settings のフォント設定まわりを追加調整してください。
+既存の複数PTY、Cmd + J、Right / Bottom切替、リサイズ、KILL / RST、Settings保存処理は壊さず、以下3点を最小差分で修正してください。
 
 ---
 
-【問題】
+【修正内容】
 
-READY 状態で RST 押下時に以下のエラーが発生しています。
+1. Terminal Font Size の最小値を 6 にする
+2. Terminal Font Family の選択肢を増やす
+3. Settings で値を変更した時点で、保存前でも背後のUIへ一時反映する  
+   ただし、Saveしない限り永続保存はしない
 
-ReferenceError: suppressExitEventRef is not defined
+---
 
-発生箇所：
+# 1. Terminal Font Size の最小値を 6 に変更
+
+現在の最小値が 10 などになっている場合、6 に変更してください。
+
+対象：
+
+- SettingsPanel の input min
+- 値の clamp 処理
+- default / load / save 時のバリデーション
+- TerminalDock 側の安全値補正
+
+仕様：
 
 ```text
-TerminalDock.jsx:182
-restartCurrentSession
+min: 6
+max: 20
+default: 12
+step: 1
 ````
-
-原因候補：
-
-* `suppressExitEventRef` を使っているが `useRef` 宣言がない
-* 変数名の typo
-* restart 時だけ参照しているが、kill / exit 側と状態管理が不整合
-* restart 中の意図的な kill による exit event を抑制したかったが、ref が未定義
-
----
-
-# 1. suppressExitEventRef の未定義を修正
-
-TerminalPane 内で `suppressExitEventRef` を使用している場合は、必ず定義してください。
-
-```js
-const suppressExitEventRef = useRef(false);
-```
-
-配置場所：
-
-```js
-const ptyIdRef = useRef(null);
-const ptyStartingRef = useRef(false);
-const ptyConnectedRef = useRef(false);
-const ptyStartFailedRef = useRef(false);
-const suppressExitEventRef = useRef(false);
-```
-
----
-
-# 2. Restart 時の exit event 抑制
-
-RST は内部的に既存 PTY を kill して再起動するため、その kill による `pty-exit` を通常の EXITED 表示として扱わないでください。
-
-Restart 開始時：
-
-```js
-suppressExitEventRef.current = true;
-```
-
-既存 PTY kill 後、新規 start 成功または失敗後に戻す：
-
-```js
-suppressExitEventRef.current = false;
-```
-
-PTY exit handler 側：
-
-```js
-if (suppressExitEventRef.current) {
-  return;
-}
-```
-
-または、必要なら表示だけ抑制し、状態更新も抑制してください。
-
----
-
-# 3. finally で必ず戻す
-
-restart が失敗しても suppress が戻らないと、以後の exit が無視されます。
-
-```js
-async function restartCurrentSession() {
-  suppressExitEventRef.current = true;
-
-  try {
-    // kill current pty
-    // clear xterm
-    // start new pty
-  } finally {
-    suppressExitEventRef.current = false;
-  }
-}
-```
-
----
-
-# 4. RST / KILL ボタンを1つに統合
-
-現在ヘッダーに `RST` と `KILL` が同時表示されていますが、active pane の状態によって1つだけ表示してください。
-
-理由：
-
-* READY / STARTING 中は KILL が必要
-* KILLED / EXITED / FAILED 中は RST が必要
-* RST と KILL を同時に出す必要はない
-* ヘッダー幅を節約できる
-
----
-
-# 5. active pane の status を取得
-
-TerminalDock 側で active pane の状態を取得してください。
 
 例：
 
-```js
-const activePane = layout.panes.find((pane) => pane.id === layout.activePaneId) || layout.panes[0];
-const activeStatus = terminalStatuses[activePane?.id] || "unknown";
-```
-
-実際の状態管理が `TerminalPane` 内部にある場合は、親に status を通知する仕組みを追加してください。
-
----
-
-# 6. pane status を親へ通知する
-
-現在 status が TerminalPane 内部だけで管理されている場合、TerminalDock が active pane の状態を判断できません。
-
-TerminalDock に `paneStatuses` state を追加してください。
-
-```js
-const [paneStatuses, setPaneStatuses] = useState({});
-```
-
-TerminalPane に callback を渡す：
-
 ```jsx
-<TerminalPane
-  ...
-  onStatusChange={(paneId, status) => {
-    setPaneStatuses((current) => ({
-      ...current,
-      [paneId]: status
-    }));
-  }}
+<input
+  type="number"
+  min="6"
+  max="20"
+  step="1"
+  value={draftSettings.terminalFontSize ?? 12}
+  onChange={...}
 />
 ```
 
-TerminalPane 側で status 変更時に通知：
+数値補正がある場合：
 
 ```js
-function updateStatus(nextStatus) {
-  setStatus(nextStatus);
-  onStatusChange?.(pane.id, nextStatus);
+function normalizeTerminalFontSize(value) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return 12;
+  return Math.min(Math.max(numeric, 6), 20);
 }
 ```
 
-既存の status setter がある場合は、そこへ統合してください。
-
 ---
 
-# 7. 状態ごとのボタン表示
+# 2. Terminal Font Family の選択肢を増やす
 
-active pane の状態に応じて表示するボタンを切り替えてください。
+Settings > Appearance の Terminal Font Family の候補を増やしてください。
+
+候補例：
 
 ```js
-const canKillActivePane =
-  activeStatus === "ready" ||
-  activeStatus === "starting";
-
-const canRestartActivePane =
-  activeStatus === "killed" ||
-  activeStatus === "exited" ||
-  activeStatus === "failed";
+const TERMINAL_FONT_OPTIONS = [
+  {
+    label: "System Mono",
+    value: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace"
+  },
+  {
+    label: "SF Mono",
+    value: "SFMono-Regular, Menlo, Monaco, Consolas, monospace"
+  },
+  {
+    label: "Menlo",
+    value: "Menlo, Monaco, Consolas, monospace"
+  },
+  {
+    label: "Monaco",
+    value: "Monaco, Menlo, Consolas, monospace"
+  },
+  {
+    label: "Consolas",
+    value: "Consolas, Menlo, Monaco, monospace"
+  },
+  {
+    label: "Courier New",
+    value: "\"Courier New\", Courier, monospace"
+  },
+  {
+    label: "Roboto Mono",
+    value: "\"Roboto Mono\", ui-monospace, monospace"
+  },
+  {
+    label: "JetBrains Mono",
+    value: "\"JetBrains Mono\", ui-monospace, monospace"
+  },
+  {
+    label: "Fira Code",
+    value: "\"Fira Code\", ui-monospace, monospace"
+  },
+  {
+    label: "Source Code Pro",
+    value: "\"Source Code Pro\", ui-monospace, monospace"
+  },
+  {
+    label: "Hack",
+    value: "Hack, ui-monospace, monospace"
+  },
+  {
+    label: "IBM Plex Mono",
+    value: "\"IBM Plex Mono\", ui-monospace, monospace"
+  }
+];
 ```
 
-表示：
+注意：
 
-```jsx
-{canKillActivePane ? (
-  <button
-    type="button"
-    className="terminal-dock-button"
-    onClick={killActivePane}
-    title="Kill active terminal"
-  >
-    KILL
-  </button>
-) : (
-  <button
-    type="button"
-    className="terminal-dock-button"
-    onClick={restartActivePane}
-    title="Restart active terminal"
-  >
-    RST
-  </button>
-)}
-```
+* 未インストールフォントは fallback されてよい
+* フォントファイルは同梱しない
+* 外部フォントを勝手に追加しない
+* select の候補を増やすだけでよい
 
 ---
 
-# 8. STARTING 中の扱い
+# 3. Settings変更中の一時反映を追加
 
-STARTING 中は KILL を表示してよいですが、kill が不安定なら disabled にしてもよいです。
+【目的】
 
-推奨：
+Settings で Terminal Font Size / Terminal Font Family を変更した時、Save前でも背後のUIに一時的に反映されるようにしてください。
+
+ただし、永続保存は Save 押下時のみです。
+
+---
+
+【現在の問題】
+
+Settings内で値を変更しても、Saveするまで背後の Terminal Dock に変化が出ない。
+
+---
+
+【目標挙動】
+
+Settings を開く
+→ Terminal Font Size を変更
+→ Save前でも背後のTerminalの文字サイズが変わる
+→ Saveを押す
+→ 設定として保存される
+
+Settings を開く
+→ Terminal Font Size を変更
+→ Saveせず閉じる / Cancel
+→ 保存済み設定へ戻る
+
+---
+
+# 4. draft settings と preview settings を分ける
+
+SettingsPanel 内部の draft 値は維持してください。
+
+ただし、値変更時に親へ一時反映する callback を追加してください。
+
+例：
+
+```jsx
+<SettingsPanel
+  settings={settings}
+  onPreviewSettingsChange={handlePreviewSettingsChange}
+  onSave={handleSaveSettings}
+  onCancel={handleCancelSettings}
+/>
+```
+
+既存の props 名に合わせてよいです。
+
+---
+
+# 5. App.jsx 側に previewSettings を追加
+
+App.jsx 側で、一時反映用の state を追加してください。
 
 ```js
-const canKillActivePane = activeStatus === "ready";
+const [previewSettings, setPreviewSettings] = useState(null);
 ```
 
-安全優先なら、STARTING 中は disabled 表示：
+有効設定を作る：
+
+```js
+const effectiveSettings = previewSettings ?? settings;
+```
+
+TerminalDock には `effectiveSettings` を渡してください。
 
 ```jsx
-<button disabled={activeStatus === "starting"}>
-  KILL
-</button>
+<TerminalDock
+  ...
+  terminalFontSize={effectiveSettings.terminalFontSize ?? 12}
+  terminalFontFamily={
+    effectiveSettings.terminalFontFamily ??
+    "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace"
+  }
+/>
 ```
 
 ---
 
-# 9. READY 状態で Restart したい場合
+# 6. Settings変更時に previewSettings を更新
 
-今回は「1ボタン化」が目的なので、READY 状態では KILL を表示してください。
+SettingsPanel の値変更時に、draftSettings を更新すると同時に親へ通知してください。
 
-操作フロー：
-
-```text
-READY → KILL → KILLED → RST → READY
+```js
+function updateDraftSettings(nextDraft) {
+  setDraftSettings(nextDraft);
+  onPreviewSettingsChange?.(nextDraft);
+}
 ```
 
-直接 Restart は出さない。
+Terminal Font Size / Terminal Font Family だけでなく、既存の Appearance 系も同じプレビューに乗せてよいです。
 
-ただし、将来的に右クリックメニューやショートカットで Restart を追加してもよいです。
+ただし影響範囲が大きい場合は、今回の対象は以下だけでよいです。
+
+* terminalFontSize
+* terminalFontFamily
 
 ---
 
-# 10. Clear は維持
+# 7. Save時
 
-CLR はそのまま残してください。
+Save時は、draftSettings を正式な settings として保存してください。
 
-ヘッダー例：
-
-READY時：
-
-```text
-TERMINAL [Right] [+] [CLR] [KILL] [×]
-```
-
-KILLED / EXITED / FAILED時：
-
-```text
-TERMINAL [Right] [+] [CLR] [RST] [×]
+```js
+async function handleSaveSettings(nextSettings) {
+  await saveSettings(nextSettings);
+  setSettings(nextSettings);
+  setPreviewSettings(null);
+}
 ```
 
 ---
 
-# 11. Kill の挙動
+# 8. Cancel / Close時
 
-KILL 押下時：
+Saveせず Settings を閉じた場合、previewSettings を破棄してください。
 
-* active pane の PTY だけ kill
-* pane は閉じない
-* xterm に `[terminal] session killed` を表示
-* status を KILLED にする
-* 他 pane は維持
+```js
+function handleCancelSettings() {
+  setPreviewSettings(null);
+}
+```
 
----
-
-# 12. Restart の挙動
-
-RST 押下時：
-
-* active pane の PTY を新規起動
-* xterm を必要に応じて clear
-* rootPath を cwd にする
-* status を STARTING → READY にする
-* 他 pane は維持
+Settingsを閉じる処理が複数ある場合、すべてで previewSettings を null に戻してください。
 
 ---
 
-# 13. exit event の扱い
+# 9. 保存しないこと
 
-通常終了：
+Settings変更中の previewSettings は localStorage / electron settings に保存しないでください。
 
-* status: EXITED
-* `[terminal] session exited...` を表示
+保存するのは Save 押下時のみです。
 
-Kill 操作：
+禁止：
 
-* status: KILLED
-* `[terminal] session killed` を表示
-* exit event による EXITED 上書きを防ぐ
+```js
+onChange のたびに saveSettings(...)
+```
 
-Restart 操作：
+OK：
 
-* 旧 PTY の exit event では EXITED 表示しない
-* 新 PTY 起動後 READY にする
-
----
-
-# 14. 禁止
-
-* RST / KILL を同時表示しない
-* READY 状態で RST ボタンを表示しない
-* KILLED / EXITED / FAILED 状態で KILL ボタンを表示しない
-* suppressExitEventRef を未定義のまま使わない
-* Restart 失敗時に suppressExitEventRef を true のまま残さない
-* 他 pane の PTY を kill しない
-* Cmd + J 非表示で PTY を kill しない
-* pane削除時の kill 仕様を壊さない
-* Right / Bottom / リサイズ処理を壊さない
+```js
+onChange → previewSettings更新のみ
+Save → saveSettings(...)
+```
 
 ---
 
-# 15. 確認
+# 10. xterm反映
+
+TerminalPane 側では、受け取った `terminalFontSize` / `terminalFontFamily` の変更を既存 xterm に反映してください。
+
+既存処理がある場合は維持し、最小値だけ 6 に対応してください。
+
+```js
+useEffect(() => {
+  const term = xtermRef.current;
+  if (!term) return;
+
+  term.options.fontSize = normalizeTerminalFontSize(terminalFontSize);
+  term.options.fontFamily = terminalFontFamily;
+
+  requestAnimationFrame(() => {
+    fitTerminal();
+  });
+}, [terminalFontSize, terminalFontFamily]);
+```
+
+---
+
+# 11. PTY resize
+
+フォントサイズやフォントファミリー変更後は cols / rows が変わる可能性があります。
+
+既存の `fitTerminal()` が `resizeTerminalSession` まで送るなら、それを使ってください。
+
+---
+
+# 12. 禁止
+
+* onChange のたびに設定を保存しない
+* Save前の一時反映を永続化しない
+* Terminal Font Size の最小値を 10 のままにしない
+* xterm を再生成しない
+* PTY を再起動しない
+* xterm buffer を消さない
+* ptyId を保存しない
+* 複数PTY管理を壊さない
+* Cmd + J 非表示時のPTY維持を壊さない
+* pane削除時のkillを壊さない
+* Settings既存項目を壊さない
+
+---
+
+# 13. 確認
 
 以下を確認してください。
 
-1. READY 状態で RST ボタンが表示されず、KILL が表示される
-2. READY 状態で KILL を押す
-3. active pane のみ KILLED になる
-4. KILLED 状態では KILL が消え、RST が表示される
-5. RST を押すと active pane のみ再起動する
-6. `suppressExitEventRef is not defined` が出ない
-7. Restart 時に一瞬 EXITED 表示で上書きされない
-8. 他 pane の PTY は維持される
-9. CLR は active pane の画面だけ消す
-10. npm run build が成功する
+1. Settings > Appearance の Terminal Font Size の最小値が 6 になっている
+2. Terminal Font Size に 6 を指定できる
+3. Terminal Font Size を変更すると、Save前でも背後の Terminal に一時反映される
+4. Saveせず Settings を閉じると、保存済みの値へ戻る
+5. Saveすると再起動後も値が保持される
+6. Terminal Font Family の候補が増えている
+7. Terminal Font Family を変更すると、Save前でも背後の Terminal に一時反映される
+8. Saveせず閉じると保存済みフォントへ戻る
+9. Saveすると再起動後もフォントが保持される
+10. フォント変更後に xterm が fit される
+11. フォント変更後も入力・出力できる
+12. PTY は再起動されない
+13. npm run build が成功する
 
 ---
 
@@ -335,9 +346,9 @@ Restart 操作：
 
 以下のみ提示してください。
 
-* suppressExitEventRef 未定義エラーの原因
-* suppressExitEventRef の追加箇所
-* Restart / Kill 時の exit event 抑制処理
-* RST / KILL を1ボタン化した箇所
-* active pane status の取得方法
+* Terminal Font Size の最小値を 6 にした箇所
+* 追加した Terminal Font Family 候補
+* Save前の一時反映に使う previewSettings / effectiveSettings
+* Save / Cancel 時の previewSettings 処理
+* xterm fontSize / fontFamily 反映処理
 * npm run build の結果

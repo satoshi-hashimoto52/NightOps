@@ -12,6 +12,56 @@ import {
 } from "../utils/codexLimits";
 
 const DEFAULT_MODEL_OPTIONS = ["gpt-5.5", "gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex", "gpt-5.2"];
+const TERMINAL_FONT_OPTIONS = [
+  {
+    label: "System Mono",
+    value: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace"
+  },
+  {
+    label: "SF Mono",
+    value: "SFMono-Regular, Menlo, Monaco, Consolas, monospace"
+  },
+  {
+    label: "Menlo",
+    value: "Menlo, Monaco, Consolas, monospace"
+  },
+  {
+    label: "Monaco",
+    value: "Monaco, Menlo, Consolas, monospace"
+  },
+  {
+    label: "Consolas",
+    value: "Consolas, Menlo, Monaco, monospace"
+  },
+  {
+    label: "Courier New",
+    value: '"Courier New", Courier, monospace'
+  },
+  {
+    label: "Roboto Mono",
+    value: '"Roboto Mono", ui-monospace, monospace'
+  },
+  {
+    label: "JetBrains Mono",
+    value: '"JetBrains Mono", ui-monospace, monospace'
+  },
+  {
+    label: "Fira Code",
+    value: '"Fira Code", ui-monospace, monospace'
+  },
+  {
+    label: "Source Code Pro",
+    value: '"Source Code Pro", ui-monospace, monospace'
+  },
+  {
+    label: "Hack",
+    value: "Hack, ui-monospace, monospace"
+  },
+  {
+    label: "IBM Plex Mono",
+    value: '"IBM Plex Mono", ui-monospace, monospace'
+  }
+];
 
 const DEFAULT_MARKDOWN_HEADING_COLORS = ["#8fd3ff", "#7bdc6a", "#f5c542", "#c18cff", "#e88787", "#9dd6c4"];
 const DEFAULT_MARKDOWN_HEADING_SIZES = [1.65, 1.4, 1.22, 1.08, 0.98, 0.98];
@@ -60,7 +110,9 @@ function FieldHelp({ children }) {
 export default function SettingsPanel({
   settings,
   onClose,
+  onCancel,
   onSave,
+  onPreviewSettingsChange,
   onPreviewMarkdownHeadingColorsChange,
   onPreviewMarkdownHeadingSizesChange
 }) {
@@ -86,6 +138,10 @@ export default function SettingsPanel({
   );
   const [backgroundBlur, setBackgroundBlur] = useState(String(settings.backgroundBlur ?? 28));
   const [uiBackgroundBlur, setUiBackgroundBlur] = useState(String(settings.uiBackgroundBlur ?? settings.backgroundBlur ?? 28));
+  const [terminalFontSize, setTerminalFontSize] = useState(String(settings.terminalFontSize ?? 12));
+  const [terminalFontFamily, setTerminalFontFamily] = useState(
+    settings.terminalFontFamily || TERMINAL_FONT_OPTIONS[0].value
+  );
   const [limit5hResetTime, setLimit5hResetTime] = useState(settings.limit5hResetTime || DEFAULT_LIMIT5H_RESET_TIME);
   const [weeklyResetMonth, setWeeklyResetMonth] = useState(String(settings.weeklyResetMonth ?? DEFAULT_WEEKLY_RESET_MONTH));
   const [weeklyResetDay, setWeeklyResetDay] = useState(String(settings.weeklyResetDay ?? DEFAULT_WEEKLY_RESET_DAY));
@@ -109,6 +165,7 @@ export default function SettingsPanel({
   const [tokenEstimateWeek, setTokenEstimateWeek] = useState(0);
   const [panelPosition, setPanelPosition] = useState(() => getInitialPanelPosition());
   const [panelSize, setPanelSize] = useState(() => getInitialPanelSize());
+  const closePanel = onCancel || onClose;
   const markdownRows = useMemo(() => {
     const rows = [];
     for (let index = 0; index < 6; index += 3) {
@@ -147,6 +204,8 @@ export default function SettingsPanel({
     setContainerOpacity(String(normalizeOpacityPercent(settings.containerOpacity, 28)));
     setBackgroundBlur(String(settings.backgroundBlur ?? 28));
     setUiBackgroundBlur(String(settings.uiBackgroundBlur ?? settings.backgroundBlur ?? 28));
+    setTerminalFontSize(String(settings.terminalFontSize ?? 12));
+    setTerminalFontFamily(settings.terminalFontFamily || TERMINAL_FONT_OPTIONS[0].value);
     setLimit5hResetTime(settings.limit5hResetTime || DEFAULT_LIMIT5H_RESET_TIME);
     setWeeklyResetMonth(String(settings.weeklyResetMonth ?? DEFAULT_WEEKLY_RESET_MONTH));
     setWeeklyResetDay(String(settings.weeklyResetDay ?? DEFAULT_WEEKLY_RESET_DAY));
@@ -202,6 +261,24 @@ export default function SettingsPanel({
         item.id === usageModel ? { ...item, factor: value } : item
       )
     );
+  }
+
+  function updateTerminalFontSize(value) {
+    setTerminalFontSize(value);
+    onPreviewSettingsChange?.({
+      ...settings,
+      terminalFontSize: Math.max(6, Math.min(20, Math.round(Number(value) || 12))),
+      terminalFontFamily
+    });
+  }
+
+  function updateTerminalFontFamily(value) {
+    setTerminalFontFamily(value);
+    onPreviewSettingsChange?.({
+      ...settings,
+      terminalFontSize: Math.max(6, Math.min(20, Math.round(Number(terminalFontSize) || 12))),
+      terminalFontFamily: value
+    });
   }
 
   function handleApplyRemainingPercent(kind) {
@@ -355,6 +432,13 @@ export default function SettingsPanel({
       return;
     }
 
+    const nextTerminalFontSize = Number(terminalFontSize);
+
+    if (!(nextTerminalFontSize >= 6 && nextTerminalFontSize <= 20)) {
+      setError("Terminal Font Size must be between 6 and 20");
+      return;
+    }
+
     const nextUsageModel = modelOptions.includes(usageModel) ? usageModel : normalizedModels[0].id;
     const nextLaunchModel = modelOptions.includes(selectedLaunchModel)
       ? selectedLaunchModel
@@ -380,6 +464,8 @@ export default function SettingsPanel({
         containerOpacity: nextContainerOpacity,
         backgroundBlur: nextBackgroundBlur,
         uiBackgroundBlur: nextUiBackgroundBlur,
+        terminalFontSize: nextTerminalFontSize,
+        terminalFontFamily,
         markdownHeadingColors,
         markdownHeadingSizes
       });
@@ -437,7 +523,7 @@ export default function SettingsPanel({
   }, []);
 
   return (
-    <div className="modal-backdrop" onClick={onClose}>
+    <div className="modal-backdrop" onClick={closePanel}>
       <div
         ref={panelRef}
         className="launch-panel settings-panel"
@@ -451,7 +537,7 @@ export default function SettingsPanel({
       >
         <div className="launch-header settings-header" onPointerDown={handleHeaderPointerDown}>
           <h2>Settings</h2>
-          <button className="ghost-button" onClick={onClose}>
+          <button className="ghost-button" onClick={closePanel}>
             Close
           </button>
         </div>
@@ -512,6 +598,29 @@ export default function SettingsPanel({
                   value={uiBackgroundBlur}
                   onChange={(event) => setUiBackgroundBlur(event.target.value)}
                 />
+              </label>
+              <label className="field">
+                <span>Terminal Font Size</span>
+                <FieldHelp>Terminal Dockの文字サイズ。</FieldHelp>
+                <input
+                  type="number"
+                  min="6"
+                  max="20"
+                  step="1"
+                  value={terminalFontSize}
+                  onChange={(event) => updateTerminalFontSize(event.target.value)}
+                />
+              </label>
+              <label className="field">
+                <span>Terminal Font Family</span>
+                <FieldHelp>Terminal Dockのフォント。</FieldHelp>
+                <select value={terminalFontFamily} onChange={(event) => updateTerminalFontFamily(event.target.value)}>
+                  {TERMINAL_FONT_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
               </label>
             </div>
           </section>

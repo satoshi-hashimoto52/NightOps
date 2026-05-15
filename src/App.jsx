@@ -133,6 +133,11 @@ function loadTerminalLayoutState() {
     const visible = Boolean(parsed.visible);
     const size = Number.isFinite(parsed.size) ? parsed.size : 360;
     const paneCount = Math.min(Math.max(Number(parsed.paneCount) || 1, 1), 3);
+    const nextPaneNumberRaw = Number(parsed.nextPaneNumber);
+    const nextPaneNumber = Math.max(
+      paneCount + 1,
+      Number.isFinite(nextPaneNumberRaw) && nextPaneNumberRaw > 0 ? Math.floor(nextPaneNumberRaw) : paneCount + 1
+    );
 
     const paneSizes = Array.isArray(parsed.paneSizes)
       ? parsed.paneSizes.slice(0, paneCount).map((value) => {
@@ -150,7 +155,8 @@ function loadTerminalLayoutState() {
       dock,
       size,
       paneCount,
-      paneSizes
+      paneSizes,
+      nextPaneNumber
     };
   } catch (error) {
     console.warn("Failed to load terminal layout", error);
@@ -161,13 +167,19 @@ function loadTerminalLayoutState() {
 function saveTerminalLayoutState(layout) {
   try {
     const paneCount = Math.min(Math.max(layout.panes?.length || 1, 1), 3);
+    const nextPaneNumberRaw = Number(layout.nextPaneNumber);
+    const nextPaneNumber = Math.max(
+      paneCount + 1,
+      Number.isFinite(nextPaneNumberRaw) && nextPaneNumberRaw > 0 ? Math.floor(nextPaneNumberRaw) : paneCount + 1
+    );
 
     const payload = {
       visible: Boolean(layout.visible),
       dock: layout.dock === "bottom" ? "bottom" : "right",
       size: Number.isFinite(layout.size) ? layout.size : 360,
       paneCount,
-      paneSizes: (layout.paneSizes || []).slice(0, paneCount)
+      paneSizes: (layout.paneSizes || []).slice(0, paneCount),
+      nextPaneNumber
     };
 
     localStorage.setItem(TERMINAL_LAYOUT_STORAGE_KEY, JSON.stringify(payload));
@@ -215,6 +227,7 @@ export default function App() {
   const [selectedFile, setSelectedFile] = useState(null);
   const [launchOpen, setLaunchOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [previewSettings, setPreviewSettings] = useState(null);
   const [previewMarkdownHeadingColors, setPreviewMarkdownHeadingColors] = useState([]);
   const [previewMarkdownHeadingSizes, setPreviewMarkdownHeadingSizes] = useState([]);
   const [notice, setNotice] = useState("");
@@ -234,7 +247,8 @@ export default function App() {
       size: saved?.size ?? 360,
       panes: createInitialTerminalPanes(paneCount),
       activePaneId: "term-1",
-      paneSizes: saved?.paneSizes ?? Array.from({ length: paneCount }, () => 1)
+      paneSizes: saved?.paneSizes ?? Array.from({ length: paneCount }, () => 1),
+      nextPaneNumber: saved?.nextPaneNumber ?? paneCount + 1
     };
   });
   const leftPanelRef = useRef(null);
@@ -258,8 +272,10 @@ export default function App() {
     containerOpacity: 0.28,
     backgroundBlur: 28,
     uiBackgroundBlur: 28,
+    terminalFontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
     markdownHeadingColors: ["#8fd3ff", "#7bdc6a", "#f5c542", "#c18cff", "#e88787", "#9dd6c4"],
-    markdownHeadingSizes: [1.65, 1.4, 1.22, 1.08, 0.98, 0.98]
+    markdownHeadingSizes: [1.65, 1.4, 1.22, 1.08, 0.98, 0.98],
+    terminalFontSize: 12
   });
   const [topStatus, setTopStatus] = useState({
     userName: "unknown",
@@ -268,6 +284,7 @@ export default function App() {
     gitBranch: "-",
     remoteBranchUrl: ""
   });
+  const effectiveSettings = previewSettings ?? settings;
 
   function handleSelectFile(file) {
     setSelectedFile(file);
@@ -416,7 +433,8 @@ export default function App() {
     terminalLayout.dock,
     terminalLayout.size,
     terminalLayout.panes.length,
-    terminalLayout.paneSizes
+    terminalLayout.paneSizes,
+    terminalLayout.nextPaneNumber
   ]);
 
   const backgroundOpacity = normalizeOpacityPercent(settings.backgroundOpacity, 18);
@@ -806,6 +824,7 @@ export default function App() {
       setRootPath(nextSettings.initialDirectory || "");
       const saved = await saveSettings(nextSettings);
       setSettings(normalizeSettingsOpacity(saved));
+      setPreviewSettings(null);
       setPreviewMarkdownHeadingColors(saved.markdownHeadingColors || []);
       setPreviewMarkdownHeadingSizes(saved.markdownHeadingSizes || []);
       setRootPath(saved.initialDirectory);
@@ -817,6 +836,17 @@ export default function App() {
       setNotice(error?.message || "Failed to save settings");
       throw error;
     }
+  }
+
+  function handlePreviewSettingsChange(nextPreviewSettings) {
+    setPreviewSettings(nextPreviewSettings);
+  }
+
+  function handleCancelSettings() {
+    setPreviewSettings(null);
+    setPreviewMarkdownHeadingColors(settings.markdownHeadingColors || []);
+    setPreviewMarkdownHeadingSizes(settings.markdownHeadingSizes || []);
+    setSettingsOpen(false);
   }
 
   async function handleImport(paths) {
@@ -1102,6 +1132,11 @@ export default function App() {
               layout={terminalLayout}
               onChangeLayout={setTerminalLayout}
               rootPath={rootPath}
+              terminalFontSize={effectiveSettings.terminalFontSize ?? 12}
+              terminalFontFamily={
+                effectiveSettings.terminalFontFamily ??
+                "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace"
+              }
             />
           </div>
         </main>
@@ -1122,12 +1157,10 @@ export default function App() {
       {settingsOpen ? (
         <SettingsPanel
           settings={settings}
-          onClose={() => {
-            setPreviewMarkdownHeadingColors(settings.markdownHeadingColors || []);
-            setPreviewMarkdownHeadingSizes(settings.markdownHeadingSizes || []);
-            setSettingsOpen(false);
-          }}
+          onClose={handleCancelSettings}
+          onCancel={handleCancelSettings}
           onSave={handleSaveSettings}
+          onPreviewSettingsChange={handlePreviewSettingsChange}
           onPreviewMarkdownHeadingColorsChange={setPreviewMarkdownHeadingColors}
           onPreviewMarkdownHeadingSizesChange={setPreviewMarkdownHeadingSizes}
         />

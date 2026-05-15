@@ -18,6 +18,15 @@ const MIN_PANE_SIZE = 0.35;
 const DIVIDER_SIZE = 6;
 const MAX_LOG_LINES = 1000;
 
+function normalizeTerminalFontSize(value) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) {
+    return 12;
+  }
+
+  return Math.max(6, Math.min(20, Math.round(parsed)));
+}
+
 function clampDockSize(dock, nextSize) {
   const numericSize = Number(nextSize) || 0;
   const minSize = dock === "right" ? MIN_RIGHT_WIDTH : MIN_BOTTOM_HEIGHT;
@@ -60,6 +69,8 @@ function TerminalPane({
   isActive,
   rootPath,
   paneCount,
+  terminalFontSize,
+  terminalFontFamily,
   layoutDock,
   layoutVisible,
   onSelectPane,
@@ -102,7 +113,7 @@ function TerminalPane({
 
     fitAddonRef.current.fit();
     const ptyId = ptyIdRef.current;
-    if (isActiveRef.current && terminalRef.current && ptyId) {
+    if (terminalRef.current && ptyId) {
       void resizeTerminalSession({
         ptyId,
         cols: terminalRef.current.cols,
@@ -157,6 +168,7 @@ function TerminalPane({
   }
 
   async function startCurrentSession() {
+    const previousRootPath = previousRootPathRef.current;
     previousRootPathRef.current = rootPath;
     suppressExitEventRef.current = false;
 
@@ -171,6 +183,10 @@ function TerminalPane({
 
     ptyIdRef.current = result?.ptyId || "";
     setSessionState("ready");
+
+    if (previousRootPath && previousRootPath !== rootPath) {
+      writeTerminalMessage("Session restored:");
+    }
 
     requestAnimationFrame(() => {
       fitTerminal();
@@ -228,8 +244,8 @@ function TerminalPane({
 
     const term = new Terminal({
       cursorBlink: true,
-      fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
-      fontSize: 12,
+      fontFamily: terminalFontFamily,
+      fontSize: normalizeTerminalFontSize(terminalFontSize),
       lineHeight: 1.35,
       allowTransparency: true,
       theme: {
@@ -481,7 +497,21 @@ function TerminalPane({
     requestAnimationFrame(() => {
       fitTerminal();
     });
-  }, [layoutDock, layoutVisible, paneCount]);
+  }, [layoutDock, layoutVisible, paneCount, terminalFontSize, terminalFontFamily]);
+
+  useEffect(() => {
+    const term = terminalRef.current;
+    if (!term) {
+      return undefined;
+    }
+
+    term.options.fontSize = normalizeTerminalFontSize(terminalFontSize);
+    term.options.fontFamily = terminalFontFamily;
+
+    requestAnimationFrame(() => {
+      fitTerminal();
+    });
+  }, [terminalFontSize, terminalFontFamily]);
 
   useEffect(() => {
     requestAnimationFrame(() => {
@@ -577,7 +607,9 @@ function TerminalPane({
 export default function TerminalDock({
   layout,
   onChangeLayout,
-  rootPath
+  rootPath,
+  terminalFontSize = 12,
+  terminalFontFamily = "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace"
 }) {
   const resizeStateRef = useRef(null);
   const paneResizeStateRef = useRef(null);
@@ -705,6 +737,9 @@ export default function TerminalDock({
   const activeActionTitle = showKillButton ? "Kill active terminal" : "Restart active terminal";
   const activeActionHandler = showKillButton ? killActivePane : restartActivePane;
   const activeActionDisabled = activeStatus === "starting" && showKillButton;
+  const activeActionClassName = showKillButton
+    ? "terminal-dock-action terminal-dock-button-danger"
+    : "terminal-dock-action terminal-dock-button-restart";
 
   function addPane() {
     updateLayout((current) => {
@@ -714,10 +749,10 @@ export default function TerminalDock({
         return current;
       }
 
-      const nextIndex = currentPanes.length + 1;
+      const paneNumber = current.nextPaneNumber || currentPanes.length + 1;
       const nextPane = {
-        id: `term-${Date.now()}-${nextIndex}`,
-        title: `Log ${nextIndex}`,
+        id: `term-${Date.now()}-${paneNumber}`,
+        title: `Log ${paneNumber}`,
         logs: [
           {
             id: `boot-${Date.now()}`,
@@ -735,7 +770,8 @@ export default function TerminalDock({
         visible: true,
         panes: [...currentPanes, nextPane],
         activePaneId: nextPane.id,
-        paneSizes: [...currentPaneSizes, 1]
+        paneSizes: [...currentPaneSizes, 1],
+        nextPaneNumber: paneNumber + 1
       };
     });
   }
@@ -901,6 +937,8 @@ export default function TerminalDock({
         isActive={isActive}
         rootPath={rootPath}
         paneCount={panes.length}
+        terminalFontSize={terminalFontSize}
+        terminalFontFamily={terminalFontFamily}
         layoutDock={layout.dock}
         layoutVisible={layout.visible}
         onSelectPane={selectPane}
@@ -939,20 +977,24 @@ export default function TerminalDock({
             className="terminal-dock-toggle"
             onClick={() => setDock(layout.dock === "right" ? "bottom" : "right")}
             aria-label={`Switch terminal dock to ${layout.dock === "right" ? "bottom" : "right"}`}
+            title={`Switch terminal dock to ${layout.dock === "right" ? "bottom" : "right"}`}
           >
-            {layout.dock === "right" ? "Dock: Right" : "Dock: Bottom"}
+            {layout.dock === "right" ? "→" : "↓"}
           </button>
-          <button type="button" className="terminal-dock-action" onClick={addPane}>
-            +
-          </button>
+          {panes.length < MAX_PANES ? (
+            <button type="button" className="terminal-dock-action" onClick={addPane} title="Add terminal pane">
+              +
+            </button>
+          ) : null}
           <button type="button" className="terminal-dock-action" onClick={clearActivePane}>
             CLR
           </button>
           <button
             type="button"
-            className="terminal-dock-action"
+            className={activeActionClassName}
             onClick={activeActionHandler}
             title={activeActionTitle}
+            aria-label={activeActionTitle}
             disabled={activeActionDisabled}
           >
             {activeActionLabel}

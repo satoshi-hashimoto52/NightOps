@@ -1338,6 +1338,28 @@ textarea {
   background: rgba(52, 60, 71, 0.62);
 }
 
+.terminal-dock-button-danger {
+  color: #f87171;
+  border-color: rgba(248, 113, 113, 0.28);
+}
+
+.terminal-dock-button-danger:hover {
+  color: #fecaca;
+  border-color: rgba(248, 113, 113, 0.48);
+  background: rgba(248, 113, 113, 0.12);
+}
+
+.terminal-dock-button-restart {
+  color: #60a5fa;
+  border-color: rgba(96, 165, 250, 0.28);
+}
+
+.terminal-dock-button-restart:hover {
+  color: #bfdbfe;
+  border-color: rgba(96, 165, 250, 0.48);
+  background: rgba(96, 165, 250, 0.12);
+}
+
 .terminal-dock-action:disabled {
   cursor: not-allowed;
   opacity: 0.45;
