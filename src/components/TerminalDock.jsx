@@ -45,6 +45,41 @@ function formatLogTime(timestamp) {
   });
 }
 
+function formatSessionRestoredAt(timestamp) {
+  return new Intl.DateTimeFormat("en-US", {
+    timeZone: "Asia/Tokyo",
+    weekday: "long",
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+    timeZoneName: "short"
+  }).format(new Date(timestamp));
+}
+
+function DockPositionIcon({ dock }) {
+  const isRightDock = dock === "right";
+
+  return (
+    <svg className="terminal-dock-position-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      {isRightDock ? (
+        <>
+          <path d="M12 5v11" />
+          <path d="M8.5 12.5 12 16l3.5-3.5" />
+        </>
+      ) : (
+        <>
+          <path d="M5 12h11" />
+          <path d="M12.5 8.5 16 12l-3.5 3.5" />
+        </>
+      )}
+    </svg>
+  );
+}
+
 function normalizePaneSizes(panes, paneSizes) {
   const nextSizes = Array.isArray(paneSizes) ? paneSizes.slice(0, panes.length) : [];
   while (nextSizes.length < panes.length) {
@@ -185,7 +220,7 @@ function TerminalPane({
     setSessionState("ready");
 
     if (previousRootPath && previousRootPath !== rootPath) {
-      writeTerminalMessage("Session restored:");
+      writeTerminalMessage(`Session restored: ${formatSessionRestoredAt(Date.now())}`);
     }
 
     requestAnimationFrame(() => {
@@ -970,17 +1005,20 @@ export default function TerminalDock({
       style={nextSizeStyle}
     >
       <header className="terminal-dock-header">
-        <span className="terminal-dock-title">TERMINAL</span>
-        <div className="terminal-dock-toolbar">
+        <div className="terminal-dock-title-group">
+          <span className="terminal-dock-title">TERMINAL</span>
           <button
             type="button"
-            className="terminal-dock-toggle"
+            className="terminal-dock-toggle terminal-dock-position-button"
             onClick={() => setDock(layout.dock === "right" ? "bottom" : "right")}
             aria-label={`Switch terminal dock to ${layout.dock === "right" ? "bottom" : "right"}`}
             title={`Switch terminal dock to ${layout.dock === "right" ? "bottom" : "right"}`}
           >
-            {layout.dock === "right" ? "→" : "↓"}
+            <DockPositionIcon dock={layout.dock} />
           </button>
+        </div>
+        <span className="terminal-dock-spacer" aria-hidden="true" />
+        <div className="terminal-dock-toolbar">
           {panes.length < MAX_PANES ? (
             <button type="button" className="terminal-dock-action" onClick={addPane} title="Add terminal pane">
               +

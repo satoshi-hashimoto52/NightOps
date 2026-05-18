@@ -1002,6 +1002,7 @@ function Pane({
     containerLeft: 0
   });
   const markdownOutlineResizeRafRef = useRef(0);
+  const scrollSyncFrameRef = useRef(0);
   const openTabs = pane?.tabs || [];
   const activeTabPath = pane?.activeTabPath || "";
   const activeTab = openTabs.find((tab) => tab.path === activeTabPath) || null;
@@ -1435,11 +1436,41 @@ function Pane({
       editorScrollTop: event.currentTarget.scrollTop,
       editorScrollLeft: event.currentTarget.scrollLeft
     });
+    if (mode === "edit" && isMarkdown) {
+      syncPreviewScrollFromEditor();
+    }
   }
 
   function handlePreviewScroll(event) {
     syncActiveTabState({
       previewScrollTop: event.currentTarget.scrollTop
+    });
+  }
+
+  function syncPreviewScrollFromEditor() {
+    if (scrollSyncFrameRef.current) {
+      cancelAnimationFrame(scrollSyncFrameRef.current);
+    }
+
+    scrollSyncFrameRef.current = requestAnimationFrame(() => {
+      const editor = editorAreaRef.current;
+      const preview = previewScrollRef.current;
+      if (!editor || !preview) {
+        scrollSyncFrameRef.current = 0;
+        return;
+      }
+
+      if (!(mode === "edit" && isMarkdown)) {
+        scrollSyncFrameRef.current = 0;
+        return;
+      }
+
+      const editorMax = editor.scrollHeight - editor.clientHeight;
+      const previewMax = preview.scrollHeight - preview.clientHeight;
+      const ratio = editorMax > 0 ? editor.scrollTop / editorMax : 0;
+
+      preview.scrollTop = ratio * previewMax;
+      scrollSyncFrameRef.current = 0;
     });
   }
 
@@ -2631,6 +2662,21 @@ function Pane({
       }
     });
   }, [activeTabPath, mode, fileData]);
+
+  useEffect(() => {
+    if (!(mode === "edit" && isMarkdown)) {
+      return undefined;
+    }
+
+    syncPreviewScrollFromEditor();
+
+    return () => {
+      if (scrollSyncFrameRef.current) {
+        cancelAnimationFrame(scrollSyncFrameRef.current);
+        scrollSyncFrameRef.current = 0;
+      }
+    };
+  }, [mode, isMarkdown, editorScroll.top, editorScroll.left, markdownSplitRatio, showMarkdownOutlinePane]);
 
   const renderedHtml = useMemo(() => {
     if (!fileData || isMarkdown) {
