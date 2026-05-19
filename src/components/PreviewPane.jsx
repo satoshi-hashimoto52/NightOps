@@ -1,4 +1,5 @@
 import { Fragment, forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import hljs from "highlight.js/lib/core";
 import javascript from "highlight.js/lib/languages/javascript";
 import json from "highlight.js/lib/languages/json";
@@ -6,6 +7,10 @@ import python from "highlight.js/lib/languages/python";
 import swift from "highlight.js/lib/languages/swift";
 import xml from "highlight.js/lib/languages/xml";
 import css from "highlight.js/lib/languages/css";
+import typescript from "highlight.js/lib/languages/typescript";
+import markdown from "highlight.js/lib/languages/markdown";
+import bash from "highlight.js/lib/languages/bash";
+import yaml from "highlight.js/lib/languages/yaml";
 import "highlight.js/styles/github-dark.css";
 import * as pdfjsLib from "pdfjs-dist";
 import pdfWorkerSrc from "pdfjs-dist/build/pdf.worker?url";
@@ -13,6 +18,7 @@ import CopyButton from "./markdown/CopyButton";
 import CodeBlockRenderer from "./markdown/renderers/CodeBlockRenderer";
 import { parseFenceMeta } from "../utils/markdown/fenceMeta";
 import { listDirectory, onFileChanged, readFile, saveFile, unwatchFile, watchFile } from "../utils/fileLoader";
+import { confirmDiscardUnsaved } from "../utils/system";
 
 const MAX_CSV_ROWS = 1000;
 const RECENT_FILES_KEY = "nightops:recent-files";
@@ -66,6 +72,10 @@ hljs.registerLanguage("python", python);
 hljs.registerLanguage("swift", swift);
 hljs.registerLanguage("xml", xml);
 hljs.registerLanguage("css", css);
+hljs.registerLanguage("typescript", typescript);
+hljs.registerLanguage("markdown", markdown);
+hljs.registerLanguage("bash", bash);
+hljs.registerLanguage("yaml", yaml);
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerSrc;
 
@@ -224,14 +234,23 @@ function detectLanguage(fileName) {
   const map = {
     js: "javascript",
     jsx: "javascript",
-    ts: "javascript",
-    tsx: "javascript",
+    mjs: "javascript",
+    cjs: "javascript",
+    ts: "typescript",
+    tsx: "typescript",
     json: "json",
     py: "python",
     swift: "swift",
     html: "xml",
     xml: "xml",
-    css: "css"
+    css: "css",
+    md: "markdown",
+    markdown: "markdown",
+    sh: "bash",
+    bash: "bash",
+    zsh: "bash",
+    yml: "yaml",
+    yaml: "yaml"
   };
   return map[ext] || "plaintext";
 }
@@ -266,6 +285,23 @@ function normalizeEditorRanges(ranges, textLength) {
 
 function rangeKey(range) {
   return `${range.start}:${range.end}`;
+}
+
+function highlightEditorSegment(text, language) {
+  const sourceText = String(text ?? "");
+  if (!sourceText) {
+    return "";
+  }
+
+  if (!language || language === "plaintext" || !hljs.getLanguage(language)) {
+    return escapeHtml(sourceText);
+  }
+
+  try {
+    return hljs.highlight(sourceText, { language, ignoreIllegals: true }).value;
+  } catch {
+    return escapeHtml(sourceText);
+  }
 }
 
 function findTextMatches(text, query, limit = 1000) {
@@ -305,7 +341,7 @@ function findNextMatch(text, query, fromIndex) {
   return sourceText.indexOf(normalizedQuery, Math.max(0, Number(fromIndex) || 0));
 }
 
-function buildEditorHighlightHtml(text, matches, currentMatchIndex, selections, primarySelectionIndex = -1) {
+function buildEditorHighlightHtml(text, matches, currentMatchIndex, selections, primarySelectionIndex = -1, language = "plaintext") {
   const sourceText = String(text ?? "");
   if (!sourceText) {
     return "";
@@ -318,7 +354,7 @@ function buildEditorHighlightHtml(text, matches, currentMatchIndex, selections, 
   }));
 
   if (activeSelections.length === 0 && activeMatches.length === 0) {
-    return escapeHtml(sourceText);
+    return highlightEditorSegment(sourceText, language);
   }
 
   const boundaries = new Set([0, sourceText.length]);
@@ -379,8 +415,8 @@ function buildEditorHighlightHtml(text, matches, currentMatchIndex, selections, 
       }
     }
 
-    const escaped = escapeHtml(segment);
-    html += segmentClasses.length > 0 ? `<span class="${segmentClasses.join(" ")}">${escaped}</span>` : escaped;
+    const highlighted = highlightEditorSegment(segment, language);
+    html += segmentClasses.length > 0 ? `<span class="${segmentClasses.join(" ")}">${highlighted}</span>` : highlighted;
   }
 
   return html;
@@ -987,6 +1023,7 @@ function Pane({
   const pdfWrapRef = useRef(null);
   const pdfPageUrlsRef = useRef([]);
   const editorSearchInputRef = useRef(null);
+  const syntaxLayerRef = useRef(null);
   const markdownPreviewOutlineLayoutRef = useRef(null);
   const markdownSplitOutlineLayoutRef = useRef(null);
   const markdownPreviewOutlineDividerRef = useRef(null);
@@ -994,6 +1031,7 @@ function Pane({
   const editorGutterRef = useRef(null);
   const markdownSplitRef = useRef(null);
   const markdownSplitDragRef = useRef({ dragging: false });
+  const tabElementRefs = useRef(new Map());
   const markdownOutlineResizeRef = useRef({
     resizing: false,
     pointerId: null,
@@ -1026,8 +1064,9 @@ function Pane({
 
   const editorOverlayHtml = useMemo(() => {
     const selectedRanges = selections.length > 0 ? selections : editorSelection?.start !== editorSelection?.end ? [editorSelection] : [];
-    return buildEditorHighlightHtml(editValue, matches, currentMatchIndex, selectedRanges, primarySelectionIndex);
-  }, [currentMatchIndex, editValue, editorSelection, matches, primarySelectionIndex, selections]);
+    const language = detectLanguage(fileData?.name || activeTabName || activeTabPath);
+    return buildEditorHighlightHtml(editValue, matches, currentMatchIndex, selectedRanges, primarySelectionIndex, language);
+  }, [activeTabName, activeTabPath, currentMatchIndex, editValue, editorSelection, fileData?.name, matches, primarySelectionIndex, selections]);
 
   useEffect(() => {
     saveMarkdownOutlineWidth(outlineWidth);
@@ -1044,6 +1083,37 @@ function Pane({
     setEditorSelection(null);
     setEditorScroll({ top: 0, left: 0 });
   }, [activeTabPath]);
+
+  useEffect(() => {
+    if (!tabContextMenu) {
+      return undefined;
+    }
+
+    function closeMenu() {
+      setTabContextMenu(null);
+    }
+
+    function handleKeyDown(event) {
+      if (event.key === "Escape") {
+        closeMenu();
+      }
+    }
+
+    window.addEventListener("mousedown", closeMenu);
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.removeEventListener("mousedown", closeMenu);
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [tabContextMenu]);
+
+  useEffect(() => {
+    const activeTabElement = tabElementRefs.current.get(activeTabPath);
+    activeTabElement?.scrollIntoView?.({
+      block: "nearest",
+      inline: "nearest"
+    });
+  }, [activeTabPath, openTabs.length]);
 
   useEffect(() => {
     const timerId = window.setTimeout(() => {
@@ -1416,7 +1486,7 @@ function Pane({
 
       if (event.key.toLowerCase() === "w") {
         event.preventDefault();
-        closeTab(activeTabPath);
+        void closeTab(activeTabPath);
       }
     }
 
@@ -1425,6 +1495,10 @@ function Pane({
   }, [activeTabPath, openTabs]);
 
   function handleEditorScroll(event) {
+    if (syntaxLayerRef.current) {
+      syntaxLayerRef.current.scrollTop = event.currentTarget.scrollTop;
+      syntaxLayerRef.current.scrollLeft = event.currentTarget.scrollLeft;
+    }
     if (editorGutterRef.current) {
       editorGutterRef.current.scrollTop = event.currentTarget.scrollTop;
     }
@@ -2061,41 +2135,28 @@ function Pane({
     setActiveTabPath(nextTab.path);
   }
 
-  function closeTab(tabPath) {
-    if (!tabPath) {
-      return;
+  function isTabDirty(tab) {
+    if (!tab?.path) {
+      return false;
     }
 
-    syncActiveTabState();
-    const index = openTabs.findIndex((tab) => tab.path === tabPath);
-    if (index === -1) {
-      return;
+    if (tab.path === activeTabPath) {
+      return Boolean(tab.isDirty || editValue !== baseEditValue);
     }
 
-    const nextTabs = openTabs.filter((tab) => tab.path !== tabPath);
-    if (tabStateRef.current.has(tabPath)) {
-      tabStateRef.current.delete(tabPath);
+    return Boolean(tab.isDirty || tabStateRef.current.get(tab.path)?.isDirty);
+  }
+
+  async function confirmCloseTabs(tabsToClose) {
+    const dirtyCount = tabsToClose.filter(isTabDirty).length;
+    if (dirtyCount === 0) {
+      return true;
     }
 
-    setOpenTabs(nextTabs);
-    if (nextTabs.length === 0) {
-      onPaneEmpty?.(pane.id);
-    }
+    return confirmDiscardUnsaved(dirtyCount);
+  }
 
-    if (activeTabPath !== tabPath) {
-      return;
-    }
-
-    const nextActive = nextTabs[index] || nextTabs[index - 1] || null;
-    if (nextActive) {
-      setActiveTabPath(nextActive.path);
-      const saved = tabStateRef.current.get(nextActive.path);
-      if (saved) {
-        restoreTabState(nextActive.path, nextActive.name);
-      }
-      return;
-    }
-
+  function clearActiveEditorState() {
     setActiveTabPath("");
     unwatchFile();
     setFileData(null);
@@ -2108,6 +2169,89 @@ function Pane({
     setImageNavFiles([]);
   }
 
+  async function closeTabs(tabPaths) {
+    const paths = Array.from(new Set((tabPaths || []).filter(Boolean)));
+    if (paths.length === 0) {
+      return false;
+    }
+
+    syncActiveTabState();
+    const tabsToClose = openTabs.filter((tab) => paths.includes(tab.path));
+    if (tabsToClose.length === 0) {
+      return false;
+    }
+
+    const ok = await confirmCloseTabs(tabsToClose);
+    if (!ok) {
+      return false;
+    }
+
+    const closePathSet = new Set(tabsToClose.map((tab) => tab.path));
+    const firstClosedIndex = openTabs.findIndex((tab) => closePathSet.has(tab.path));
+    const nextTabs = openTabs.filter((tab) => !closePathSet.has(tab.path));
+
+    tabsToClose.forEach((tab) => {
+      tabStateRef.current.delete(tab.path);
+    });
+
+    setOpenTabs(nextTabs);
+    if (nextTabs.length === 0) {
+      onPaneEmpty?.(pane.id);
+    }
+
+    if (!closePathSet.has(activeTabPath)) {
+      return true;
+    }
+
+    const nextActive = nextTabs[firstClosedIndex] || nextTabs[firstClosedIndex - 1] || nextTabs[0] || null;
+    if (nextActive) {
+      setActiveTabPath(nextActive.path);
+      const saved = tabStateRef.current.get(nextActive.path);
+      if (saved) {
+        restoreTabState(nextActive.path, nextActive.name);
+      }
+      return true;
+    }
+
+    clearActiveEditorState();
+    return true;
+  }
+
+  async function closeTab(tabPath) {
+    return closeTabs([tabPath]);
+  }
+
+  async function closeOtherTabs(tabPath) {
+    const paths = openTabs.filter((tab) => tab.path !== tabPath).map((tab) => tab.path);
+    return closeTabs(paths);
+  }
+
+  async function closeTabsToRight(tabPath) {
+    const index = openTabs.findIndex((tab) => tab.path === tabPath);
+    if (index === -1) {
+      return false;
+    }
+
+    return closeTabs(openTabs.slice(index + 1).map((tab) => tab.path));
+  }
+
+  async function copyTabPath(tabPath) {
+    await copyTextToClipboard(tabPath);
+  }
+
+  function revealTabInTree(tab) {
+    if (!tab?.path) {
+      return;
+    }
+
+    onSelectFile?.({
+      path: tab.path,
+      name: tab.name || tab.path.split("/").pop() || tab.path,
+      type: "file",
+      directoryPath: tab.path.split("/").slice(0, -1).join("/") || "/"
+    });
+  }
+
   function handleTabContextMenu(tab, event) {
     event.preventDefault();
     event.stopPropagation();
@@ -2116,7 +2260,8 @@ function Pane({
       x: event.clientX,
       y: event.clientY,
       tabPath: tab.path,
-      tabName: tab.name
+      tabName: tab.name,
+      tab
     });
   }
 
@@ -2976,11 +3121,9 @@ function Pane({
             </div>
           ) : null}
           <div
+            ref={syntaxLayerRef}
             className="editor-highlight-layer"
             aria-hidden="true"
-            style={{
-              transform: `translate(${-editorScroll.left}px, ${-editorScroll.top}px)`
-            }}
             dangerouslySetInnerHTML={{ __html: editorOverlayHtml }}
           />
           <textarea
@@ -3260,9 +3403,16 @@ function Pane({
           return (
             <div
               key={tab.path}
+              ref={(element) => {
+                if (element) {
+                  tabElementRefs.current.set(tab.path, element);
+                } else {
+                  tabElementRefs.current.delete(tab.path);
+                }
+              }}
               role="tab"
               aria-selected={isActive}
-              tabIndex={0}
+              tabIndex={isActive ? 0 : -1}
               draggable={openTabs.length > 1}
               className={`preview-tab${openTabs.length === 1 ? " single-tab" : ""}${isActive ? " active" : ""}${isActivePane && isActive && showEditButton ? " has-actions" : ""}${isDragging ? " dragging" : ""}${isDropBefore ? " drop-before" : ""}${isDropAfter ? " drop-after" : ""}`}
               title={tab.path}
@@ -3278,16 +3428,45 @@ function Pane({
               onAuxClick={(event) => {
                 if (event.button === 1) {
                   event.preventDefault();
-                  closeTab(tab.path);
+                  void closeTab(tab.path);
                 }
               }}
               onKeyDown={(event) => {
-                if (event.key !== "Enter" && event.key !== " ") {
+                if (event.key === "Enter" || event.key === " ") {
+                  event.preventDefault();
+                  onPaneFocus?.(pane.id);
+                  setActiveTabPath(tab.path);
                   return;
                 }
-                event.preventDefault();
-                onPaneFocus?.(pane.id);
-                setActiveTabPath(tab.path);
+
+                if (event.key === "ArrowRight" || event.key === "ArrowLeft") {
+                  event.preventDefault();
+                  const offset = event.key === "ArrowRight" ? 1 : -1;
+                  const nextIndex = (tabIndex + offset + openTabs.length) % openTabs.length;
+                  const nextTab = openTabs[nextIndex];
+                  if (nextTab) {
+                    onPaneFocus?.(pane.id);
+                    setActiveTabPath(nextTab.path);
+                    requestAnimationFrame(() => tabElementRefs.current.get(nextTab.path)?.focus());
+                  }
+                  return;
+                }
+
+                if (event.key === "Home" || event.key === "End") {
+                  event.preventDefault();
+                  const nextTab = event.key === "Home" ? openTabs[0] : openTabs[openTabs.length - 1];
+                  if (nextTab) {
+                    onPaneFocus?.(pane.id);
+                    setActiveTabPath(nextTab.path);
+                    requestAnimationFrame(() => tabElementRefs.current.get(nextTab.path)?.focus());
+                  }
+                  return;
+                }
+
+                if (event.key === "Backspace" || event.key === "Delete") {
+                  event.preventDefault();
+                  void closeTab(tab.path);
+                }
               }}
               onDoubleClick={() => {
                 // Pinning is reserved for a later step.
@@ -3368,44 +3547,85 @@ function Pane({
                   ) : null}
                 </span>
               ) : null}
-              <span
+              <button
+                type="button"
                 className="preview-tab-close"
-                role="button"
                 tabIndex={-1}
                 aria-label={`Close ${tab.name}`}
                 onClick={(event) => {
                   event.preventDefault();
                   event.stopPropagation();
-                  closeTab(tab.path);
+                  void closeTab(tab.path);
                 }}
                 onMouseDown={(event) => event.stopPropagation()}
               >
                 ×
-              </span>
+              </button>
             </div>
           );
         })}
       </div>
-      {tabContextMenu ? (
+      {tabContextMenu && typeof document !== "undefined" ? createPortal(
         <div
           className="preview-tab-menu"
           style={{ left: `${tabContextMenu.x}px`, top: `${tabContextMenu.y}px` }}
           onClick={(event) => event.stopPropagation()}
+          onMouseDown={(event) => event.stopPropagation()}
         >
+          <button
+            type="button"
+            className="preview-tab-menu-item danger"
+            onClick={async () => {
+              await closeTab(tabContextMenu.tabPath);
+              setTabContextMenu(null);
+            }}
+          >
+            Close
+          </button>
+          <button
+            type="button"
+            className="preview-tab-menu-item"
+            disabled={openTabs.length <= 1}
+            onClick={async () => {
+              await closeOtherTabs(tabContextMenu.tabPath);
+              setTabContextMenu(null);
+            }}
+          >
+            Close Others
+          </button>
+          <button
+            type="button"
+            className="preview-tab-menu-item"
+            disabled={openTabs.findIndex((tab) => tab.path === tabContextMenu.tabPath) >= openTabs.length - 1}
+            onClick={async () => {
+              await closeTabsToRight(tabContextMenu.tabPath);
+              setTabContextMenu(null);
+            }}
+          >
+            Close to Right
+          </button>
+          <button
+            type="button"
+            className="preview-tab-menu-item"
+            onClick={async () => {
+              await copyTabPath(tabContextMenu.tabPath);
+              setTabContextMenu(null);
+            }}
+          >
+            Copy Path
+          </button>
           <button
             type="button"
             className="preview-tab-menu-item"
             onClick={() => {
-              onSplitRight?.(pane.id, tabContextMenu.tabPath);
+              revealTabInTree(tabContextMenu.tab);
               setTabContextMenu(null);
             }}
           >
-            Split Right
+            Reveal in Tree
           </button>
-          <button type="button" className="preview-tab-menu-item" onClick={() => setTabContextMenu(null)}>
-            Close
-          </button>
-        </div>
+        </div>,
+        document.body
       ) : null}
       <div className="preview-toolbar">
         <div className="preview-toolbar-main">
@@ -3883,10 +4103,10 @@ const PaneContainer = forwardRef(function PaneContainer({
         const remaining = sourcePane.tabs.filter((tab) => tab.path !== draggingTab.path);
         const adjustedIndex = insertIndex > sourceIndex ? insertIndex - 1 : insertIndex;
         const targetPosition = Math.max(0, Math.min(adjustedIndex, remaining.length));
-        if (targetPosition === sourceIndex || targetPosition === sourceIndex + 1) {
+        if (targetPosition === sourceIndex) {
           return current;
         }
-        nextTargetTabs = insertTabAt(remaining, moveTab, adjustedIndex);
+        nextTargetTabs = insertTabAt(remaining, moveTab, targetPosition);
       } else {
         const targetPosition = Math.max(0, Math.min(insertIndex, targetPane.tabs.length));
         const dedupedTarget = targetPane.tabs.filter((tab) => tab.path !== draggingTab.path);
