@@ -704,6 +704,25 @@ textarea {
   padding: 8px;
 }
 
+.workspace-empty-state {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px 10px;
+  line-height: 1.35;
+}
+
+.workspace-empty-title {
+  color: var(--text-main);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.workspace-empty-message {
+  color: var(--text-sub);
+  font-size: 11px;
+}
+
 .right-panel-body {
   flex: 1;
   min-width: 0;

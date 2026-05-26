@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, webContents } from "electron";
+import { app, BrowserWindow, Menu, dialog, ipcMain, webContents } from "electron";
 import { clipboard, shell } from "electron";
 import fs from "fs/promises";
 import { chmodSync, createReadStream, existsSync, statSync, watch } from "fs";
@@ -28,6 +28,7 @@ import {
 
 const execFileAsync = promisify(execFile);
 const isDev = !app.isPackaged;
+const APP_NAME = "NightOps";
 const devServerUrl = process.env.VITE_DEV_SERVER_URL || "http://127.0.0.1:5173";
 const MAX_PREVIEW_FILE_SIZE = 5 * 1024 * 1024;
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -63,6 +64,8 @@ const DEFAULT_LIMITS_SETTINGS = {
 
 const terminalSessions = new Map();
 const nodePty = nodePtyModule.default ?? nodePtyModule;
+
+app.setName(APP_NAME);
 
 function getSettingsPath() {
   return path.join(app.getPath("userData"), "settings.json");
@@ -117,6 +120,114 @@ function flushPendingExternalDropPaths() {
 
   const paths = pendingExternalDropPaths.splice(0, pendingExternalDropPaths.length);
   broadcastExternalDropPaths(paths);
+}
+
+function createApplicationMenu() {
+  const isMac = process.platform === "darwin";
+  const template = [];
+
+  if (isMac) {
+    template.push({
+      label: APP_NAME,
+      submenu: [
+        {
+          label: `About ${APP_NAME}`,
+          role: "about"
+        },
+        { type: "separator" },
+        {
+          label: `Hide ${APP_NAME}`,
+          role: "hide"
+        },
+        {
+          label: "Hide Others",
+          role: "hideOthers"
+        },
+        {
+          label: "Show All",
+          role: "unhide"
+        },
+        { type: "separator" },
+        {
+          label: `Quit ${APP_NAME}`,
+          accelerator: "Command+Q",
+          role: "quit"
+        }
+      ]
+    });
+  }
+
+  template.push({
+    label: "File",
+    submenu: [
+      isMac
+        ? {
+            label: "Close Window",
+            role: "close"
+          }
+        : {
+            label: "Quit",
+            accelerator: "Ctrl+Q",
+            role: "quit"
+          }
+    ]
+  });
+
+  template.push({
+    label: "Edit",
+    submenu: [
+      { label: "Undo", role: "undo" },
+      { label: "Redo", role: "redo" },
+      { type: "separator" },
+      { label: "Cut", role: "cut" },
+      { label: "Copy", role: "copy" },
+      { label: "Paste", role: "paste" },
+      { label: "Select All", role: "selectAll" }
+    ]
+  });
+
+  template.push({
+    label: "View",
+    submenu: [
+      { label: "Toggle Full Screen", role: "togglefullscreen" },
+      ...(isDev
+        ? [
+            { type: "separator" },
+            {
+              label: "Reload",
+              accelerator: isMac ? "Command+R" : "Ctrl+R",
+              role: "reload"
+            },
+            {
+              label: "Force Reload",
+              accelerator: isMac ? "Command+Shift+R" : "Ctrl+Shift+R",
+              role: "forceReload"
+            },
+            {
+              label: "Toggle DevTools",
+              accelerator: isMac ? "Alt+Command+I" : "Ctrl+Shift+I",
+              role: "toggleDevTools"
+            }
+          ]
+        : [])
+    ]
+  });
+
+  template.push({
+    label: "Window",
+    submenu: [
+      { label: "Minimize", role: "minimize" },
+      { label: "Zoom", role: "zoom" },
+      ...(isMac
+        ? [
+            { type: "separator" },
+            { label: "Bring All to Front", role: "front" }
+          ]
+        : [])
+    ]
+  });
+
+  Menu.setApplicationMenu(Menu.buildFromTemplate(template));
 }
 
 app.on("open-file", (event, filePath) => {
@@ -914,9 +1025,8 @@ end tell`;
 }
 
 async function readSettings() {
-  const fallbackPath = os.homedir();
   const defaultSettings = {
-    initialDirectory: fallbackPath,
+    initialDirectory: "",
     codexModels: DEFAULT_CODEX_MODELS,
     selectedLaunchModel: "gpt-5.4-mini",
     usageModel: "gpt-5.4",
@@ -939,7 +1049,10 @@ async function readSettings() {
   try {
     const raw = await fs.readFile(getSettingsPath(), "utf8");
     const parsed = JSON.parse(raw);
-    const initialDirectory = parsed.initialDirectory || fallbackPath;
+    const initialDirectory =
+      typeof parsed.initialDirectory === "string" && parsed.initialDirectory.trim()
+        ? parsed.initialDirectory.trim()
+        : defaultSettings.initialDirectory;
     const codexModels = Array.isArray(parsed.codexModels)
       ? parsed.codexModels
           .filter((item) => item && typeof item.id === "string" && item.id.trim())
@@ -1015,78 +1128,28 @@ async function readSettings() {
       ? selectedLaunchModel
       : codexModels[0].id;
     const normalizedUsageModel = modelIds.includes(usageModel) ? usageModel : codexModels[0].id;
-    try {
-      const stats = await fs.stat(initialDirectory);
-      if (!stats.isDirectory()) {
-        return {
-          ...defaultSettings,
-          codexModels,
-          selectedLaunchModel: normalizedSelectedLaunchModel,
-          usageModel: normalizedUsageModel,
-          weeklyDivisor,
-          limit5hDivisor,
-          limit5hRemainingPercent,
-          weeklyRemainingPercent,
-          backgroundOpacity,
-          containerOpacity,
-          backgroundBlur,
-          uiBackgroundBlur,
-          terminalFontSize,
-          terminalFontFamily,
-          ...codexLimitSettings,
-          limit5hBaselineTokenEstimate,
-          weeklyBaselineTokenEstimate,
-          markdownHeadingColors,
-          markdownHeadingSizes,
-          markdownHeadingColor
-        };
-      }
-      return {
-        initialDirectory,
-        codexModels,
-        selectedLaunchModel: normalizedSelectedLaunchModel,
-        usageModel: normalizedUsageModel,
-        weeklyDivisor,
-        limit5hDivisor,
-        limit5hRemainingPercent,
-        weeklyRemainingPercent,
-        backgroundOpacity,
-        containerOpacity,
-        backgroundBlur,
-        uiBackgroundBlur,
-        terminalFontSize,
-        terminalFontFamily,
-        ...codexLimitSettings,
-        limit5hBaselineTokenEstimate,
-        weeklyBaselineTokenEstimate,
-        markdownHeadingColors,
-        markdownHeadingSizes,
-        markdownHeadingColor
-      };
-    } catch {
-      return {
-        ...defaultSettings,
-        codexModels,
-        selectedLaunchModel: normalizedSelectedLaunchModel,
-        usageModel: normalizedUsageModel,
-        weeklyDivisor,
-        limit5hDivisor,
-        limit5hRemainingPercent,
-        weeklyRemainingPercent,
-        backgroundOpacity,
-        containerOpacity,
-        backgroundBlur,
-        uiBackgroundBlur,
-        terminalFontSize,
-        terminalFontFamily,
-        ...codexLimitSettings,
-        limit5hBaselineTokenEstimate,
-        weeklyBaselineTokenEstimate,
-        markdownHeadingColors,
-        markdownHeadingSizes,
-        markdownHeadingColor
-      };
-    }
+    return {
+      initialDirectory,
+      codexModels,
+      selectedLaunchModel: normalizedSelectedLaunchModel,
+      usageModel: normalizedUsageModel,
+      weeklyDivisor,
+      limit5hDivisor,
+      limit5hRemainingPercent,
+      weeklyRemainingPercent,
+      backgroundOpacity,
+      containerOpacity,
+      backgroundBlur,
+      uiBackgroundBlur,
+      terminalFontSize,
+      terminalFontFamily,
+      ...codexLimitSettings,
+      limit5hBaselineTokenEstimate,
+      weeklyBaselineTokenEstimate,
+      markdownHeadingColors,
+      markdownHeadingSizes,
+      markdownHeadingColor
+    };
   } catch {
     return defaultSettings;
   }
@@ -1095,7 +1158,8 @@ async function readSettings() {
 async function saveSettings(settings) {
   const current = await readSettings();
   const nextSettings = {
-    initialDirectory: settings.initialDirectory || current.initialDirectory || os.homedir(),
+    initialDirectory:
+      typeof settings.initialDirectory === "string" ? settings.initialDirectory : current.initialDirectory || "",
     codexModels:
       Array.isArray(settings.codexModels) && settings.codexModels.length > 0
         ? settings.codexModels
@@ -1461,6 +1525,7 @@ ipcMain.handle("terminal:run-command", async (_event, { command, cwd }) => {
 });
 
 app.whenReady().then(() => {
+  createApplicationMenu();
   createWindow();
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) {

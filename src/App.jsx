@@ -231,6 +231,7 @@ export default function App() {
   const [previewMarkdownHeadingColors, setPreviewMarkdownHeadingColors] = useState([]);
   const [previewMarkdownHeadingSizes, setPreviewMarkdownHeadingSizes] = useState([]);
   const [notice, setNotice] = useState("");
+  const [workspaceError, setWorkspaceError] = useState("");
   const [treeCollapsed, setTreeCollapsed] = useState(false);
   const [sidebarWidth, setSidebarWidth] = useState(140);
   const [treeReloadToken, setTreeReloadToken] = useState(0);
@@ -481,7 +482,22 @@ export default function App() {
         const result = await getSettings();
         const normalizedResult = normalizeSettingsOpacity(result);
         setSettings(normalizedResult);
-        setRootPath(normalizedResult.initialDirectory);
+        const initialDirectory = normalizedResult.initialDirectory || "";
+        if (!initialDirectory) {
+          setRootPath("");
+          setWorkspaceError("");
+          return;
+        }
+
+        try {
+          await listDirectory(initialDirectory);
+          setRootPath(initialDirectory);
+          setWorkspaceError("");
+        } catch {
+          setRootPath("");
+          setSelectedFile(null);
+          setWorkspaceError("Saved workspace is unavailable. Use Browse to choose another folder.");
+        }
       } catch (error) {
         setNotice(error?.message || "Failed to load initial directory");
       }
@@ -741,12 +757,22 @@ export default function App() {
   }, [treeCollapsed]);
 
   async function handleDirectoryChange(nextPath) {
+    try {
+      await listDirectory(nextPath);
+    } catch (error) {
+      setWorkspaceError("Selected directory is unavailable. Please choose another folder.");
+      setNotice(error?.message || "Failed to load selected directory");
+      return false;
+    }
+
     const nextSettings = await saveSettings({ ...settings, initialDirectory: nextPath });
     setSettings(normalizeSettingsOpacity(nextSettings));
     setRootPath(nextPath);
     setSelectedFile(null);
+    setWorkspaceError("");
     setNotice("Directory applied");
     appendActiveTerminalLog("info", `Directory applied: ${nextPath}`);
+    return true;
   }
 
   async function handleBrowseDirectory() {
@@ -760,8 +786,10 @@ export default function App() {
           }
         }
 
-        paneContainerRef.current?.resetWorkspace?.();
-        await handleDirectoryChange(browseResult.path);
+        const didChange = await handleDirectoryChange(browseResult.path);
+        if (didChange) {
+          paneContainerRef.current?.resetWorkspace?.();
+        }
       }
     } catch (error) {
       setNotice(error?.message || "Browse failed");
@@ -1101,7 +1129,14 @@ export default function App() {
                   reloadToken={treeReloadToken}
                 />
               ) : (
-                <div className="panel-empty">Loading root...</div>
+                <div className="panel-empty workspace-empty-state">
+                  <div className="workspace-empty-title">
+                    {workspaceError ? "Workspace unavailable" : "No workspace selected"}
+                  </div>
+                  <div className="workspace-empty-message">
+                    {workspaceError || "Use Browse to choose a workspace."}
+                  </div>
+                </div>
               )}
             </>
           ) : null}
