@@ -108,3 +108,9 @@ For local `.app` packaging, use:
 ```bash
 npm run pack:mac
 ```
+
+Release verification checklist:
+
+```text
+docs/RELEASE_CHECKLIST.md
+```

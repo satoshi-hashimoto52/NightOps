@@ -150,6 +150,29 @@ npm run clean:release
 npm run pack:mac
 ```
 
+## Distribution Artifacts
+
+For local `.app` verification:
+
+```bash
+npm run pack:mac
+```
+
+For unsigned local DMG / ZIP artifacts:
+
+```bash
+npm run dist:mac
+```
+
+Generated artifacts are placed under:
+
+```text
+release/
+```
+
+These artifacts are currently unsigned and not notarized.
+They are intended for local verification only.
+
 ## Gatekeeper / Unsigned App
 
 The current `NightOps.app` is unsigned and not notarized.

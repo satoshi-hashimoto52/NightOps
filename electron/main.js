@@ -122,6 +122,25 @@ function flushPendingExternalDropPaths() {
   broadcastExternalDropPaths(paths);
 }
 
+function getPackagedResourcePath(...segments) {
+  if (app.isPackaged) {
+    return path.join(process.resourcesPath, ...segments);
+  }
+
+  return path.join(app.getAppPath(), ...segments);
+}
+
+function openLocalDocument(...segments) {
+  const filePath = getPackagedResourcePath(...segments);
+  shell.openPath(filePath).then((errorMessage) => {
+    if (errorMessage) {
+      console.warn("[help] failed to open document", filePath, errorMessage);
+    }
+  }).catch((error) => {
+    console.warn("[help] failed to open document", filePath, error?.message || error);
+  });
+}
+
 function createApplicationMenu() {
   const isMac = process.platform === "darwin";
   const template = [];
@@ -224,6 +243,24 @@ function createApplicationMenu() {
             { label: "Bring All to Front", role: "front" }
           ]
         : [])
+    ]
+  });
+
+  template.push({
+    label: "Help",
+    submenu: [
+      {
+        label: "NightOps Documentation",
+        click: () => openLocalDocument("README.md")
+      },
+      {
+        label: "Packaging Guide",
+        click: () => openLocalDocument("docs", "PACKAGING_MAC.md")
+      },
+      {
+        label: "Terminal Dock Specification",
+        click: () => openLocalDocument("docs", "TERMINAL_DOCK.md")
+      }
     ]
   });
 
