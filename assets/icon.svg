@@ -1,0 +1,23 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">NightOps app icon</title>
+  <desc id="desc">A dark rounded square icon with a large geometric N and terminal prompt accent.</desc>
+
+  <rect x="64" y="64" width="896" height="896" rx="190" fill="#0f1720"/>
+  <path d="M110 252C132 164 172 110 252 110H772C852 110 892 164 914 252V772C892 860 852 914 772 914H252C172 914 132 860 110 772V252Z" fill="#111418"/>
+  <rect x="176" y="812" width="672" height="8" rx="4" fill="#263241" opacity="0.65"/>
+
+  <path
+    d="M270 740L270 284L368 284L658 590L658 284L754 284L754 740L656 740L366 434L366 740Z"
+    fill="#f8fafc"
+  />
+  <path
+    d="M366 284L658 590L658 740L366 434Z"
+    fill="#cbd5e1"
+  />
+
+  <path
+    d="M596 558L642 512L734 604L642 696L596 650L642 604Z"
+    fill="#facc15"
+  />
+  <rect x="714" y="668" width="120" height="44" rx="22" fill="#60a5fa"/>
+</svg>

@@ -122,6 +122,20 @@ electron-builder 設定は package.json の build に記載する。
 * asar: true
 * node-pty は asarUnpack
 
+## App Icon
+
+アプリアイコンは以下を使用する。
+
+* assets/icon.svg
+* assets/icon.icns
+
+macOS .app 作成時は package.json の build.mac.icon で assets/icon.icns を参照する。
+アイコンを再生成する場合:
+
+```bash
+sh scripts/build-mac-icon.sh
+```
+
 ## Clean Release Artifacts
 
 release成果物を削除する場合:

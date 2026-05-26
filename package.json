@@ -59,6 +59,7 @@
     ],
     "mac": {
       "identity": null,
+      "icon": "assets/icon.icns",
       "target": [
         "dir"
       ],
