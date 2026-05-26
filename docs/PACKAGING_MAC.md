@@ -150,6 +150,30 @@ npm run clean:release
 npm run pack:mac
 ```
 
+## Gatekeeper / Unsigned App
+
+The current `NightOps.app` is unsigned and not notarized.
+
+This is expected for local builds.
+
+On first launch, macOS may block the app with a security warning.
+
+To open the app manually:
+
+1. Open Finder
+2. Right-click `NightOps.app`
+3. Choose `Open`
+4. Confirm `Open`
+
+This project does not currently configure:
+
+- Developer ID signing
+- hardened runtime
+- notarization
+- distribution DMG signing
+
+These should be added only when the app is intended for external distribution.
+
 ## Verification Checklist
 
 packaged .app 作成後は以下を確認する。
@@ -166,8 +190,20 @@ packaged .app 作成後は以下を確認する。
 
 ## Known Limitations
 
-* 未署名 .app のため Gatekeeper 警告が出る可能性がある
-* notarize は未対応
-* dmg 配布は未対応
-* auto update は未対応
-* 実行中プロセスはアプリ再起動後に復元しない
+* The generated `.app` is unsigned.
+* The app is not notarized.
+* Gatekeeper warnings may appear on first launch.
+* DMG distribution is not configured yet.
+* Auto update is not configured yet.
+* Running processes are not restored after app restart.
+
+## Future Distribution Tasks
+
+For external distribution, consider:
+
+* Developer ID Application signing
+* hardened runtime
+* entitlements
+* notarization
+* signed DMG
+* update mechanism

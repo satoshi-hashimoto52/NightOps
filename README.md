@@ -84,3 +84,27 @@ See:
 ```text
 docs/PACKAGING_MAC.md
 ```
+
+## macOS App Notes
+
+The generated `NightOps.app` is currently intended for local use.
+
+It is not signed or notarized, so macOS may show a Gatekeeper warning on first launch.
+
+If macOS blocks the app, open it from Finder by using:
+
+1. Right-click `NightOps.app`
+2. Choose `Open`
+3. Confirm `Open`
+
+For local development, continue to use:
+
+```bash
+npm run dev
+```
+
+For local `.app` packaging, use:
+
+```bash
+npm run pack:mac
+```
