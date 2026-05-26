@@ -28,9 +28,9 @@ import {
 
 const execFileAsync = promisify(execFile);
 const isDev = !app.isPackaged;
+const devServerUrl = process.env.VITE_DEV_SERVER_URL || "http://127.0.0.1:5173";
 const MAX_PREVIEW_FILE_SIZE = 5 * 1024 * 1024;
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const SETTINGS_PATH = path.join(app.getAppPath(), "settings.json");
 const DEFAULT_CODEX_MODELS = [
   { id: "gpt-5.5", factor: 1.2 },
   { id: "gpt-5.4", factor: 1.0 },
@@ -63,6 +63,14 @@ const DEFAULT_LIMITS_SETTINGS = {
 
 const terminalSessions = new Map();
 const nodePty = nodePtyModule.default ?? nodePtyModule;
+
+function getSettingsPath() {
+  return path.join(app.getPath("userData"), "settings.json");
+}
+
+async function ensureSettingsDir() {
+  await fs.mkdir(app.getPath("userData"), { recursive: true });
+}
 
 function normalizeOpacityPercent(value, fallback) {
   const parsed = Number(value);
@@ -149,7 +157,7 @@ function createWindow() {
   });
 
   if (isDev) {
-    win.loadURL("http://127.0.0.1:5173");
+    win.loadURL(devServerUrl);
     win.webContents.openDevTools();
   } else {
     win.loadFile(path.join(app.getAppPath(), "dist", "index.html"));
@@ -929,7 +937,7 @@ async function readSettings() {
   };
 
   try {
-    const raw = await fs.readFile(SETTINGS_PATH, "utf8");
+    const raw = await fs.readFile(getSettingsPath(), "utf8");
     const parsed = JSON.parse(raw);
     const initialDirectory = parsed.initialDirectory || fallbackPath;
     const codexModels = Array.isArray(parsed.codexModels)
@@ -1176,7 +1184,8 @@ async function saveSettings(settings) {
   nextSettings.usageModel = nextModelIds.includes(nextSettings.usageModel)
     ? nextSettings.usageModel
     : nextSettings.codexModels[0].id;
-  await fs.writeFile(SETTINGS_PATH, `${JSON.stringify(nextSettings, null, 2)}\n`, "utf8");
+  await ensureSettingsDir();
+  await fs.writeFile(getSettingsPath(), `${JSON.stringify(nextSettings, null, 2)}\n`, "utf8");
   return nextSettings;
 }
 
