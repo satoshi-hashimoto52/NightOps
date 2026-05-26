@@ -10,6 +10,7 @@
     "dev:vite": "vite --host 127.0.0.1",
     "dev:electron": "electron .",
     "build": "vite build",
+    "clean:release": "rm -rf release",
     "pack:mac": "npm run build && electron-builder --mac dir",
     "dist:mac": "npm run build && electron-builder --mac",
     "postinstall": "node scripts/ensure-node-pty-permissions.mjs",

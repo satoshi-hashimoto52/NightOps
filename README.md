@@ -76,3 +76,11 @@ Preview / Editor のテキスト編集時に、ファイル拡張子に応じた
 - テキスト編集シンタックスハイライトの実装箇所
 - Cmd+F / Cmd+D / Save / dirty に影響させていないこと
 - npm run build の結果
+
+## macOS App Packaging
+
+See:
+
+```text
+docs/PACKAGING_MAC.md
+```
